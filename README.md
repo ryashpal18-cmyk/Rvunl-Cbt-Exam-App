@@ -81,9 +81,9 @@ correctIndex, explanation_en, explanation_hi
 
 ## Windows releases and automatic updates
 
-The workflow in [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) runs on every push to `main` and through manual dispatch. It uses the GitHub Actions run number as the patch version, so releases advance sequentially as `1.1.1`, `1.1.2`, and onward. The workflow publishes the installer, portable executable, blockmap, and update metadata to GitHub Releases and also uploads them as an Actions artifact.
+The workflow in [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) runs on every push to `main` and through manual dispatch. It uses the GitHub Actions run number as the patch version and packages both the installer and portable executable with code-signing auto-discovery disabled. The `.exe`, blockmap, and update metadata files are uploaded to the `RVUNL-CBT-Mock-App-Windows` Actions artifact.
 
-The installed NSIS edition can check, download, and install a newer release from the dashboard. The portable edition can check for a release but Windows portable executables cannot replace themselves reliably; portable users should download the new portable file from GitHub Releases.
+Automatic GitHub Release publishing is intentionally separate from this build job. This prevents a release API error from discarding an otherwise successful Windows build. The installed NSIS edition can use its update button whenever a compatible GitHub Release and `latest.yml` are published; portable users must replace the portable executable manually.
 
 ## Privacy and exam integrity
 
