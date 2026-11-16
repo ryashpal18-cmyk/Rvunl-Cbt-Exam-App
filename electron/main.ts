@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { join } from 'node:path';
-import { deletePaper, publicState, saveAttempt, savePaper, setPin, verifyPin } from './db';
+import { deletePapers, publicState, resetAttempts, saveAttempt, savePapers, setPin, verifyAdminPin, verifyPin } from './db';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -36,8 +36,10 @@ function createWindow(): void {
 app.whenReady().then(() => {
   ipcMain.handle('storage:load', () => publicState());
   ipcMain.handle('attempt:save', (_event, attempt) => saveAttempt(attempt));
-  ipcMain.handle('paper:save', (_event, paper) => savePaper(paper));
-  ipcMain.handle('paper:delete', (_event, paperId) => deletePaper(paperId));
+  ipcMain.handle('admin:verify-pin', (_event, pin) => verifyAdminPin(pin));
+  ipcMain.handle('admin:papers-save', (_event, papers, pin) => savePapers(papers, pin));
+  ipcMain.handle('admin:papers-delete', (_event, paperIds, pin) => deletePapers(paperIds, pin));
+  ipcMain.handle('admin:attempts-reset', (_event, target, pin) => resetAttempts(target, pin));
   ipcMain.handle('profile:set-pin', (_event, userId, pin) => setPin(userId, pin));
   ipcMain.handle('profile:verify-pin', (_event, userId, pin) => verifyPin(userId, pin));
   createWindow();

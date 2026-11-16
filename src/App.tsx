@@ -8,7 +8,7 @@ import Scorecard from './components/Scorecard';
 import samplePaper from './data/sample_paper_01.json';
 import { Attempt, ExamConfig, Paper, ProfileRecord, QuestionResponse, StoredState, UserId } from './types/exam';
 import { calculateScore } from './utils/scoring';
-import { checkPin, loadState, persistAttempt, persistPaper, removePaper, updatePin } from './services/storage';
+import { checkAdminPin, checkPin, loadState, persistAttempt, persistPapers, removePapers, resetStoredAttempts, updatePin } from './services/storage';
 
 type View = 'profiles' | 'dashboard' | 'instructions' | 'exam' | 'scorecard' | 'review';
 const builtInPaper = samplePaper as unknown as Paper;
@@ -66,21 +66,33 @@ export default function App() {
     if (!selectedPaper) return;
     setPaper(selectedPaper); setAttempt(selected); setView('scorecard');
   };
-  const importPaper = async (newPaper: Paper) => {
-    await persistPaper(newPaper);
-    setState((previous) => previous ? { ...previous, papers: [newPaper, ...previous.papers.filter((item) => item.paperId !== newPaper.paperId)] } : previous);
+  const importPapers = async (newPapers: Paper[], adminPin: string) => {
+    const count = await persistPapers(newPapers, adminPin);
+    const uniquePapers = Array.from(new Map(newPapers.map((item) => [item.paperId, item])).values());
+    setState((previous) => {
+      if (!previous) return previous;
+      const incomingIds = new Set(uniquePapers.map((item) => item.paperId));
+      return { ...previous, papers: [...uniquePapers, ...previous.papers.filter((item) => !incomingIds.has(item.paperId))] };
+    });
+    return count;
   };
-  const deletePaper = async (paperId: string) => {
-    if (!window.confirm('Delete this imported paper? Saved attempt records will remain, but their detailed review will no longer be available.')) return;
-    await removePaper(paperId);
-    setState((previous) => previous ? { ...previous, papers: previous.papers.filter((item) => item.paperId !== paperId) } : previous);
+  const deletePapers = async (paperIds: string[], adminPin: string) => {
+    const count = await removePapers(paperIds, adminPin);
+    const selectedIds = new Set(paperIds);
+    setState((previous) => previous ? { ...previous, papers: previous.papers.filter((item) => !selectedIds.has(item.paperId)) } : previous);
+    return count;
+  };
+  const resetResults = async (target: UserId | 'all', adminPin: string) => {
+    const count = await resetStoredAttempts(target, adminPin);
+    setState((previous) => previous ? { ...previous, attempts: target === 'all' ? [] : previous.attempts.filter((item) => item.userId !== target) } : previous);
+    return count;
   };
   const dashboard = () => { setPaper(null); setAttempt(null); setConfig(null); setView('dashboard'); };
 
   if (loadError) return <div className="flex min-h-screen items-center justify-center bg-red-50 p-8"><div className="card max-w-lg p-8 text-center"><h1 className="text-2xl font-bold text-red-800">Local storage could not be opened</h1><p className="mt-3 text-red-700">{loadError}</p><button className="btn-primary mt-6" onClick={() => window.location.reload()}>Try again</button></div></div>;
   if (!state) return <div className="flex min-h-screen items-center justify-center bg-canvas"><div className="h-12 w-12 animate-spin rounded-full border-4 border-slate-200 border-t-navy" aria-label="Loading" /></div>;
   if (view === 'profiles' || !userId || !profile) return <ProfileSelector profiles={state.profiles as ProfileRecord[]} onLogin={login} onSetPin={setPin} />;
-  if (view === 'dashboard') return <Dashboard userId={userId} userName={profile.name} attempts={state.attempts} papers={papers} onStart={selectPaper} onOpenAttempt={openAttempt} onImport={importPaper} onDeletePaper={deletePaper} onLogout={() => { setUserId(null); setView('profiles'); }} />;
+  if (view === 'dashboard') return <Dashboard userId={userId} userName={profile.name} attempts={state.attempts} papers={papers} onStart={selectPaper} onOpenAttempt={openAttempt} onVerifyAdminPin={checkAdminPin} onImportPapers={importPapers} onDeletePapers={deletePapers} onResetResults={resetResults} onLogout={() => { setUserId(null); setView('profiles'); }} />;
   if (view === 'instructions' && paper) return <InstructionsModal paper={paper} onBack={dashboard} onStart={startExam} />;
   if (view === 'exam' && paper && config) return <ExamScreen userId={userId} userName={profile.name} paper={paper} config={config} onSubmit={(responses, time, byTimer) => void submitExam(responses, time, byTimer)} />;
   if (view === 'scorecard' && paper && attempt) return <Scorecard attempt={attempt} paper={paper} onReview={() => setView('review')} onDashboard={dashboard} />;

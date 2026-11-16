@@ -5,8 +5,10 @@ declare global {
     rvunlAPI?: {
       loadState: () => Promise<StoredState>;
       saveAttempt: (attempt: Attempt) => Promise<void>;
-      savePaper: (paper: Paper) => Promise<void>;
-      deletePaper: (paperId: string) => Promise<void>;
+      verifyAdminPin: (pin: string) => Promise<boolean>;
+      savePapers: (papers: Paper[], pin: string) => Promise<number>;
+      deletePapers: (paperIds: string[], pin: string) => Promise<number>;
+      resetAttempts: (target: UserId | 'all', pin: string) => Promise<number>;
       setPin: (userId: UserId, pin: string | null) => Promise<void>;
       verifyPin: (userId: UserId, pin: string) => Promise<boolean>;
     };

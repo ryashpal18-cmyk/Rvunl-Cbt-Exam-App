@@ -61,14 +61,14 @@ export default function ProfileSelector({ profiles, onLogin, onSetPin }: Props) 
     <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_#dcecff,_transparent_45%),linear-gradient(135deg,#f8fafc,#eef2f7)] px-8 py-12">
       <section className="w-full max-w-5xl">
         <div className="mb-10 text-center">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-navy text-white shadow-lg"><BookOpenCheck size={34} /></div>
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-700 via-violet-600 to-fuchsia-600 text-white shadow-xl shadow-violet-200"><BookOpenCheck size={34} /></div>
           <p className="eyebrow">Offline examination suite</p>
           <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-slate-900">RVUNL CBT Mock Exam</h1>
           <p className="mt-3 text-slate-600">Junior Assistant / Commercial Assistant-II · Phase-I</p>
         </div>
         <div className="grid grid-cols-2 gap-7">
           {profiles.map((profile, index) => (
-            <article key={profile.id} className="card overflow-hidden">
+            <article key={profile.id} className={`card overflow-hidden border-t-4 transition hover:-translate-y-1 hover:shadow-xl ${index ? 'border-t-violet-500' : 'border-t-cyan-500'}`}>
               <button className="group flex w-full items-center gap-5 p-7 text-left hover:bg-slate-50" onClick={() => void chooseProfile(profile)}>
                 <span className={`flex h-20 w-20 items-center justify-center rounded-2xl text-white ${index ? 'bg-violet-600' : 'bg-cyan-700'}`}><UserRound size={40} /></span>
                 <span className="flex-1">

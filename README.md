@@ -5,6 +5,8 @@ An offline Windows desktop mock-exam application for the RVUNL Junior Assistant 
 ## Included features
 
 - Dedicated local profiles for **Monika** and **Shivani**, with optional hashed 4-digit PINs
+- PIN-protected Admin Settings for resetting Monika, Shivani, or both profiles' result history
+- Admin-only individual and bulk deletion of imported question papers
 - One built-in bilingual 70-question, 100-mark mock paper
 - Strict 60-minute timer with automatic submission
 - Authentic five-option CBT controls and question palette statuses
@@ -15,7 +17,7 @@ An offline Windows desktop mock-exam application for the RVUNL Junior Assistant 
 - Detailed correct, wrong, and skipped answer review with bilingual explanations
 - Per-profile Mistake Bank mini-tests
 - Monika/Shivani subject-accuracy comparison charts
-- Offline JSON, Excel (`.xlsx`), and CSV paper import
+- Offline multi-file JSON, Excel (`.xlsx`), and CSV paper import
 - Windows NSIS installer and portable executable builds
 
 All profile data, imported papers, and attempts are saved as a local JSON database in Electron's Windows `userData` directory. The application does not send data over the network.
@@ -57,7 +59,7 @@ Output files are written to `release/`.
 
 ## Importing papers
 
-The importer accepts `.json`, `.xlsx`, and `.csv` files. Every imported paper must contain exactly 70 questions totaling 100 marks.
+The admin importer accepts multiple `.json`, `.xlsx`, and `.csv` files in one selection. Every imported paper must contain exactly 70 questions totaling 100 marks. Invalid files are reported separately and do not block valid files in the same selection.
 
 JSON papers follow the shape of [`src/data/sample_paper_01.json`](src/data/sample_paper_01.json).
 
