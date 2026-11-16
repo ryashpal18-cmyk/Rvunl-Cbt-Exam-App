@@ -1,4 +1,4 @@
-name: Build RVUNL CBT Windows EXE
+name: Build and Release RVUNL CBT Windows EXE
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  build-and-release:
     runs-on: windows-latest
 
     steps:
@@ -25,16 +25,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Assign sequential build version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $parts = $package.version.Split('.')
+          $version = "$($parts[0]).$($parts[1]).${{ github.run_number }}"
+          npm version $version --no-git-tag-version
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+
       - name: Build frontend and Electron app
         run: npm run build
 
-      - name: Package Windows executables
-        run: npx electron-builder --win --x64 --publish never
+      - name: Package and publish Windows release
+        run: npx electron-builder --win --x64 --publish always
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RVUNL-CBT-Mock-App-Windows
-          path: release/*.exe
+          name: RVUNL-CBT-Mock-App-Windows-v${{ env.APP_VERSION }}
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 30

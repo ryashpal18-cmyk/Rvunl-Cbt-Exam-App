@@ -1,36 +1,32 @@
 import { ChangeEvent, useRef, useState } from 'react';
-import { CheckCircle2, FileJson2, FileSpreadsheet, UploadCloud, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, FileJson2, FileSpreadsheet, UploadCloud, XCircle } from 'lucide-react';
 import { readSheet } from 'read-excel-file/browser';
-import { Paper, Question, SUBJECTS } from '../types/exam';
+import { DIFFICULTIES, Difficulty, PAPER_CATEGORIES, Paper, PaperCategory, Question, SUBJECTS } from '../types/exam';
 
-interface Props { onImport: (papers: Paper[]) => Promise<void>; }
+interface Props {
+  onImport: (papers: Paper[]) => Promise<void>;
+  onDownloadTemplate: (data: Uint8Array) => Promise<void>;
+}
 interface ImportMessage { imported: string[]; errors: string[]; }
-
 const optionKeys = ['a', 'b', 'c', 'd', 'e'];
+const templateHeaders = ['id', 'subject', 'marks', 'question_en', 'question_hi', 'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en', 'option_a_hi', 'option_b_hi', 'option_c_hi', 'option_d_hi', 'option_e_hi', 'correctIndex', 'explanation_en', 'explanation_hi'];
 
 function tableToRows(table: unknown[][]): Record<string, unknown>[] {
   const [headerRow, ...dataRows] = table;
   if (!headerRow) return [];
   const headers = headerRow.map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim());
-  return dataRows
-    .filter((row) => row.some((cell) => cell !== null && cell !== ''))
-    .map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ''])));
+  return dataRows.filter((row) => row.some((cell) => cell !== null && cell !== '')).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ''])));
 }
 
 function parseCsv(text: string): Record<string, unknown>[] {
-  const table: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let quoted = false;
+  const table: string[][] = []; let row: string[] = []; let field = ''; let quoted = false;
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
     if (char === '"' && quoted && text[index + 1] === '"') { field += '"'; index += 1; }
     else if (char === '"') quoted = !quoted;
     else if (char === ',' && !quoted) { row.push(field); field = ''; }
-    else if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && text[index + 1] === '\n') index += 1;
-      row.push(field); table.push(row); row = []; field = '';
-    } else field += char;
+    else if ((char === '\n' || char === '\r') && !quoted) { if (char === '\r' && text[index + 1] === '\n') index += 1; row.push(field); table.push(row); row = []; field = ''; }
+    else field += char;
   }
   if (field || row.length) { row.push(field); table.push(row); }
   return tableToRows(table);
@@ -45,21 +41,11 @@ function rowsToPaper(rows: Record<string, unknown>[], fileName: string): Paper {
   const questions: Question[] = rows.map((row, index) => {
     const correctRaw = value(row, 'correctIndex', 'correct_index', 'correctAnswer', 'correct_answer').toUpperCase();
     const correctIndex = correctRaw === '' ? -1 : /^[A-E]$/.test(correctRaw) ? correctRaw.charCodeAt(0) - 65 : Number(correctRaw);
-    return {
-      id: Number(value(row, 'id', 'question_id')) || index + 1,
-      subject: value(row, 'subject') as Question['subject'],
-      marks: Number(value(row, 'marks')),
-      question_en: value(row, 'question_en', 'questionEnglish'),
-      question_hi: value(row, 'question_hi', 'questionHindi'),
-      options_en: optionKeys.map((key) => value(row, `option_${key}_en`, `option${key.toUpperCase()}_en`)) as Question['options_en'],
-      options_hi: optionKeys.map((key) => value(row, `option_${key}_hi`, `option${key.toUpperCase()}_hi`)) as Question['options_hi'],
-      correctIndex,
-      explanation_en: value(row, 'explanation_en', 'explanationEnglish'),
-      explanation_hi: value(row, 'explanation_hi', 'explanationHindi'),
-    };
+    return { id: Number(value(row, 'id', 'question_id')) || index + 1, subject: value(row, 'subject') as Question['subject'], marks: Number(value(row, 'marks')), question_en: value(row, 'question_en', 'questionEnglish'), question_hi: value(row, 'question_hi', 'questionHindi'), options_en: optionKeys.map((key) => value(row, `option_${key}_en`, `option${key.toUpperCase()}_en`)) as Question['options_en'], options_hi: optionKeys.map((key) => value(row, `option_${key}_hi`, `option${key.toUpperCase()}_hi`)) as Question['options_hi'], correctIndex, explanation_en: value(row, 'explanation_en', 'explanationEnglish'), explanation_hi: value(row, 'explanation_hi', 'explanationHindi') };
   });
+  const first = rows[0] ?? {};
   const slug = fileName.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported-paper';
-  return { paperId: `${slug}-${crypto.randomUUID().slice(0, 8)}`, title: fileName.replace(/\.[^.]+$/, ''), durationMinutes: 60, questions, imported: true, importedAt: new Date().toISOString() };
+  return { paperId: `${slug}-${crypto.randomUUID().slice(0, 8)}`, title: value(first, 'paper_title', 'paperTitle') || fileName.replace(/\.[^.]+$/, ''), durationMinutes: Number(value(first, 'duration_minutes', 'durationMinutes')) || 60, questions, imported: true, importedAt: new Date().toISOString() };
 }
 
 function validatePaper(input: unknown): Paper {
@@ -90,60 +76,46 @@ async function parseFile(file: File): Promise<Paper> {
   throw new Error('Only JSON, XLSX, and CSV files are supported.');
 }
 
-export default function Importer({ onImport }: Props) {
+function createTemplate(): Uint8Array {
+  const rows = Array.from({ length: 70 }, (_, index) => {
+    const id = index + 1;
+    const subject = id <= 23 ? SUBJECTS[0] : id <= 30 ? SUBJECTS[1] : id <= 40 ? SUBJECTS[2] : id <= 50 ? SUBJECTS[3] : id <= 60 ? SUBJECTS[4] : SUBJECTS[5];
+    const marks = id <= 30 ? 2 : 1;
+    return [id, subject, marks, ...Array(15).fill('')].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+  });
+  return new TextEncoder().encode(`\uFEFF${templateHeaders.join(',')}\r\n${rows.join('\r\n')}`);
+}
+
+export default function Importer({ onImport, onDownloadTemplate }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<ImportMessage | null>(null);
   const [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState<PaperCategory>('Full Mock');
+  const [difficulty, setDifficulty] = useState<Difficulty>('Medium');
+  const [year, setYear] = useState(new Date().getFullYear());
 
   const pickFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
+    const files = Array.from(event.target.files ?? []); event.target.value = '';
     if (!files.length) return;
     setBusy(true); setMessage(null);
-    const papers: Paper[] = [];
-    const errors: string[] = [];
+    const papers: Paper[] = []; const errors: string[] = [];
     for (const file of files) {
-      try {
-        papers.push(await parseFile(file));
-      } catch (error) {
-        errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Could not read this file.'}`);
-      }
+      try { papers.push({ ...(await parseFile(file)), category, difficulty, year }); }
+      catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Could not read this file.'}`); }
     }
-    try {
-      if (papers.length) await onImport(papers);
-      setMessage({ imported: papers.map((paper) => paper.title), errors });
-    } catch (error) {
-      setMessage({ imported: [], errors: [error instanceof Error ? error.message : 'Could not save the selected papers.'] });
-    } finally {
-      setBusy(false);
-    }
+    try { if (papers.length) await onImport(papers); setMessage({ imported: papers.map((paper) => paper.title), errors }); }
+    catch (error) { setMessage({ imported: [], errors: [error instanceof Error ? error.message : 'Could not save the selected papers.'] }); }
+    finally { setBusy(false); }
   };
 
-  return (
-    <section>
-      <div className="rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-orange-500 p-[1px] shadow-lg shadow-violet-200/60">
-        <div className="rounded-2xl bg-white p-6">
-          <p className="eyebrow">Bulk paper uploader</p>
-          <h2 className="mt-2 text-2xl font-bold">Import many mock papers together</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Select as many valid 70-question files as you want in one step. Every file is checked separately, so one invalid file does not block the valid papers.</p>
-          <input ref={input} multiple className="hidden" type="file" accept=".json,.xlsx,.csv" onChange={(event) => void pickFiles(event)} />
-          <button disabled={busy} className="mt-6 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-violet-300 bg-gradient-to-br from-violet-50 via-fuchsia-50 to-orange-50 p-10 text-center transition hover:border-violet-600 hover:shadow-md" onClick={() => input.current?.click()}>
-            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white shadow-lg"><UploadCloud size={34} /></span>
-            <b className="mt-4 text-xl text-slate-900">{busy ? 'Checking selected papers…' : 'Choose one or many paper files'}</b>
-            <span className="mt-2 text-sm text-slate-500">Use Ctrl/Shift to select multiple files · JSON · XLSX · CSV</span>
-          </button>
-        </div>
-      </div>
-
-      {message && <div className="mt-5 space-y-3">
-        {message.imported.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 size={19} /> {message.imported.length} paper{message.imported.length === 1 ? '' : 's'} imported</p><p className="mt-1 text-sm">{message.imported.join(', ')}</p></div>}
-        {message.errors.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900"><p className="flex items-center gap-2 font-bold"><XCircle size={19} /> {message.errors.length} file{message.errors.length === 1 ? '' : 's'} could not be imported</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{message.errors.map((error) => <li key={error}>{error}</li>)}</ul></div>}
-      </div>}
-
-      <div className="mt-5 grid grid-cols-2 gap-5">
-        <div className="card border-l-4 border-l-orange-400 p-5"><FileJson2 className="text-orange-500" /><h3 className="mt-3 font-bold">JSON format</h3><p className="mt-2 text-sm leading-6 text-slate-500">Use the built-in paper schema: paperId, title, durationMinutes, and a questions array with bilingual fields.</p></div>
-        <div className="card border-l-4 border-l-emerald-500 p-5"><FileSpreadsheet className="text-emerald-600" /><h3 className="mt-3 font-bold">Spreadsheet columns</h3><p className="mt-2 text-sm leading-6 text-slate-500">id, subject, marks, question_en, question_hi, option_a_en through option_e_hi, correctIndex, explanation_en, explanation_hi.</p></div>
-      </div>
-    </section>
-  );
+  return <section>
+    <div className="rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-orange-500 p-[1px] shadow-lg shadow-violet-200/60"><div className="rounded-2xl bg-white p-6">
+      <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">Bulk paper uploader</p><h2 className="mt-2 text-2xl font-bold">Import many mock papers together</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Select many files in one step. Every file is checked separately, so one invalid file does not block valid papers.</p></div><button className="btn-secondary flex shrink-0 items-center gap-2 text-sm" onClick={() => void onDownloadTemplate(createTemplate())}><Download size={17} /> Download CSV template</button></div>
+      <div className="mt-5 grid grid-cols-3 gap-3"><label className="text-xs font-bold text-slate-600">Category<select className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" value={category} onChange={(event) => setCategory(event.target.value as PaperCategory)}>{PAPER_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-xs font-bold text-slate-600">Difficulty<select className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}>{DIFFICULTIES.map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-xs font-bold text-slate-600">Year<input className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label></div>
+      <input ref={input} multiple className="hidden" type="file" accept=".json,.xlsx,.csv" onChange={(event) => void pickFiles(event)} />
+      <button disabled={busy} className="mt-6 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-violet-300 bg-gradient-to-br from-violet-50 via-fuchsia-50 to-orange-50 p-9 text-center transition hover:border-violet-600 hover:shadow-md" onClick={() => input.current?.click()}><span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white shadow-lg"><UploadCloud size={34} /></span><b className="mt-4 text-xl text-slate-900">{busy ? 'Checking selected papers…' : 'Choose one or many paper files'}</b><span className="mt-2 text-sm text-slate-500">Use Ctrl/Shift to select multiple files · JSON · XLSX · CSV</span></button>
+    </div></div>
+    {message && <div className="mt-5 space-y-3">{message.imported.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 size={19} /> {message.imported.length} paper{message.imported.length === 1 ? '' : 's'} imported</p><p className="mt-1 text-sm">{message.imported.join(', ')}</p></div>}{message.errors.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900"><p className="flex items-center gap-2 font-bold"><XCircle size={19} /> {message.errors.length} file{message.errors.length === 1 ? '' : 's'} could not be imported</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{message.errors.map((error) => <li key={error}>{error}</li>)}</ul></div>}</div>}
+    <div className="mt-5 grid grid-cols-2 gap-5"><div className="card border-l-4 border-l-orange-400 p-5"><FileJson2 className="text-orange-500" /><h3 className="mt-3 font-bold">JSON format</h3><p className="mt-2 text-sm leading-6 text-slate-500">Use the built-in paper schema with bilingual question fields.</p></div><div className="card border-l-4 border-l-emerald-500 p-5"><FileSpreadsheet className="text-emerald-600" /><h3 className="mt-3 font-bold">Ready template</h3><p className="mt-2 text-sm leading-6 text-slate-500">The CSV template already contains 70 IDs, subjects, and the correct 100-mark distribution.</p></div></div>
+  </section>;
 }

@@ -11,10 +11,12 @@
     "build:web": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run typecheck && npm run build:electron && npm run build:web",
-    "package:win": "npm run build && electron-builder --win --x64"
+    "package:win": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "lucide-react": "0.468.0",
+    "pdf-lib": "^1.17.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "read-excel-file": "^9.3.17",
