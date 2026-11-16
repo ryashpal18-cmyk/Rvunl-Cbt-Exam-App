@@ -7,10 +7,15 @@ export const SUBJECTS = [
   'Mathematics',
 ] as const;
 
+export const PAPER_CATEGORIES = ['Full Mock', 'Previous Year', 'Rajasthan GK', 'Subject Practice', 'Custom'] as const;
+export const DIFFICULTIES = ['Easy', 'Medium', 'Hard'] as const;
+
 export type Subject = (typeof SUBJECTS)[number];
+export type PaperCategory = (typeof PAPER_CATEGORIES)[number];
+export type Difficulty = (typeof DIFFICULTIES)[number];
 export type Language = 'en' | 'hi';
 export type NegativeMarking = 'none' | 'quarter';
-export type UserId = 'monika' | 'shivani';
+export type UserId = string;
 
 export interface Question {
   id: number;
@@ -32,6 +37,9 @@ export interface Paper {
   questions: Question[];
   imported?: boolean;
   importedAt?: string;
+  category?: PaperCategory;
+  difficulty?: Difficulty;
+  year?: number;
 }
 
 export interface QuestionResponse {
@@ -59,12 +67,21 @@ export interface ProfileRecord {
   id: UserId;
   name: string;
   pinConfigured: boolean;
+  builtIn?: boolean;
 }
 
 export interface StoredState {
   profiles: ProfileRecord[];
   attempts: Attempt[];
   papers: Paper[];
+}
+
+export type UpdateState = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+export interface UpdateStatus {
+  state: UpdateState;
+  message: string;
+  version?: string;
+  percent?: number;
 }
 
 export interface ExamConfig {

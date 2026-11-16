@@ -1,11 +1,12 @@
-import { Attempt, Paper, StoredState, UserId } from '../types/exam';
+import { Attempt, Paper, ProfileRecord, StoredState, UserId } from '../types/exam';
 
 const STORAGE_KEY = 'rvunl-cbt-browser-data';
-const ADMIN_PIN_HASH = '3865e98e8d3fe3316c6b8cb24219bf0847bdd11b9f9b1940dda302111134c297';
+const ADMIN_PIN_KEY = 'rvunl-admin-pin-hash';
+const DEFAULT_ADMIN_PIN_HASH = '3865e98e8d3fe3316c6b8cb24219bf0847bdd11b9f9b1940dda302111134c297';
 const defaultState = (): StoredState => ({
   profiles: [
-    { id: 'monika', name: 'Monika', pinConfigured: false },
-    { id: 'shivani', name: 'Shivani', pinConfigured: false },
+    { id: 'monika', name: 'Monika', pinConfigured: false, builtIn: true },
+    { id: 'shivani', name: 'Shivani', pinConfigured: false, builtIn: true },
   ],
   attempts: [],
   papers: [],
@@ -24,12 +25,22 @@ function browserSave(state: StoredState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+async function pinHash(pin: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function verifyBrowserAdmin(pin: string): Promise<boolean> {
   if (!/^\d{4}$/.test(pin)) return false;
-  const bytes = new TextEncoder().encode(pin);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return hash === ADMIN_PIN_HASH;
+  return await pinHash(pin) === (localStorage.getItem(ADMIN_PIN_KEY) ?? DEFAULT_ADMIN_PIN_HASH);
+}
+
+function downloadBrowserFile(fileName: string, data: Uint8Array, type: string): void {
+  const blob = new Blob([data], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = fileName; link.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function loadState(): Promise<StoredState> {
@@ -44,6 +55,12 @@ export async function persistAttempt(attempt: Attempt): Promise<void> {
 
 export async function checkAdminPin(pin: string): Promise<boolean> {
   return window.rvunlAPI ? window.rvunlAPI.verifyAdminPin(pin) : verifyBrowserAdmin(pin);
+}
+
+export async function updateAdminPin(currentPin: string, newPin: string): Promise<void> {
+  if (window.rvunlAPI) return window.rvunlAPI.changeAdminPin(currentPin, newPin);
+  if (!(await verifyBrowserAdmin(currentPin))) throw new Error('Incorrect admin PIN.');
+  localStorage.setItem(ADMIN_PIN_KEY, await pinHash(newPin));
 }
 
 export async function persistPapers(papers: Paper[], adminPin: string): Promise<number> {
@@ -73,6 +90,47 @@ export async function resetStoredAttempts(target: UserId | 'all', adminPin: stri
   const attempts = target === 'all' ? [] : state.attempts.filter((attempt) => attempt.userId !== target);
   browserSave({ ...state, attempts });
   return state.attempts.length - attempts.length;
+}
+
+export async function createProfile(name: string, adminPin: string): Promise<ProfileRecord> {
+  if (window.rvunlAPI) return window.rvunlAPI.addProfile(name, adminPin);
+  if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
+  const state = browserLoad();
+  if (state.profiles.some((profile) => profile.name.toLowerCase() === name.trim().toLowerCase())) throw new Error('A profile with this name already exists.');
+  const profile = { id: `student-${crypto.randomUUID().slice(0, 8)}`, name: name.trim(), pinConfigured: false, builtIn: false };
+  browserSave({ ...state, profiles: [...state.profiles, profile] });
+  return profile;
+}
+
+export async function removeProfile(userId: UserId, adminPin: string): Promise<number> {
+  if (window.rvunlAPI) return window.rvunlAPI.deleteProfile(userId, adminPin);
+  if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
+  const state = browserLoad();
+  const profile = state.profiles.find((item) => item.id === userId);
+  if (!profile || profile.builtIn) throw new Error('This profile cannot be deleted.');
+  const count = state.attempts.filter((attempt) => attempt.userId === userId).length;
+  browserSave({ ...state, profiles: state.profiles.filter((item) => item.id !== userId), attempts: state.attempts.filter((attempt) => attempt.userId !== userId) });
+  return count;
+}
+
+export async function exportBackup(adminPin: string): Promise<boolean> {
+  if (window.rvunlAPI) return window.rvunlAPI.exportBackup(adminPin);
+  if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
+  const data = new TextEncoder().encode(JSON.stringify({ format: 'rvunl-cbt-backup', version: 1, exportedAt: new Date().toISOString(), ...browserLoad(), pins: {} }, null, 2));
+  downloadBrowserFile(`rvunl-cbt-backup-${new Date().toISOString().slice(0, 10)}.json`, data, 'application/json');
+  return true;
+}
+
+export async function importBackup(adminPin: string): Promise<StoredState | null> {
+  if (window.rvunlAPI) return window.rvunlAPI.importBackup(adminPin);
+  throw new Error('Backup restore is available in the installed Windows app.');
+}
+
+export async function saveAdminExport(fileName: string, data: Uint8Array, kind: 'csv' | 'pdf', adminPin: string): Promise<boolean> {
+  if (window.rvunlAPI) return window.rvunlAPI.saveExportFile(fileName, Array.from(data), kind, adminPin);
+  if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
+  downloadBrowserFile(fileName, data, kind === 'pdf' ? 'application/pdf' : 'text/csv');
+  return true;
 }
 
 export async function updatePin(userId: UserId, pin: string | null): Promise<void> {

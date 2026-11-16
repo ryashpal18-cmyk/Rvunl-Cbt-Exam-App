@@ -2,6 +2,9 @@
   "paperId": "rvunl-pre-mock-01",
   "title": "RVUNL Junior Assistant Phase-I Mock Test 01",
   "durationMinutes": 60,
+  "category": "Full Mock",
+  "difficulty": "Medium",
+  "year": 2026,
   "questions": [
     {
       "id": 1,
