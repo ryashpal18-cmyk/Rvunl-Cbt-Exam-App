@@ -44,7 +44,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64 --publish always -c.publish.releaseType=release
+        run: npx electron-builder --win --x64 --publish always
 
       - name: Verify installer and portable executables
         shell: pwsh
@@ -62,3 +62,19 @@ jobs:
             release/*.blockmap
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish verified GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/latest.yml)) { throw 'Missing auto-update metadata.' }
+          $result = gh release view $env:GITHUB_REF_NAME --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = @(Get-ChildItem release -File | Where-Object { $_.Extension -in '.exe', '.blockmap' -or $_.Name -eq 'latest.yml' })
+          foreach ($file in $expected) {
+            if ($result -notcontains $file.Name) { throw "Missing release asset $($file.Name)." }
+          }
+          gh release edit $env:GITHUB_REF_NAME --draft=false --latest
+          exit $LASTEXITCODE

@@ -14,7 +14,8 @@
     {
       provider: "github",
       owner: "ryashpal18-cmyk",
-      repo: "Rvunl-Cbt-Exam-App"
+      repo: "Rvunl-Cbt-Exam-App",
+      releaseType: "draft"
     }
   ],
   win: {
