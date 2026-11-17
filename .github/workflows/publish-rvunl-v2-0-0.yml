@@ -1,25 +1,71 @@
-name: Retry RVUNL v2.0.0 release
+name: Finalize verified RVUNL Windows release
 on:
   push:
     branches: [publish-rvunl-v2-0-0]
     paths: ['.github/workflows/publish-rvunl-v2-0-0.yml']
 permissions:
   contents: write
-  actions: write
+  actions: read
 jobs:
-  tag-and-dispatch:
+  publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      BUILD_RUN: '44013838726'
+      TAG: v2.0.0
     steps:
-      - name: Update the unpublished tag and dispatch Windows packaging
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          OLD: '7c5a1620f14516005f160776a1bfe3266aa3fbe2'
-          TARGET: '4c541f0bc5f4f750104d0db91375a95eca21ed0f'
+      - name: Download verified Windows package
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" = "$TARGET"
-          test "$(gh api "repos/$REPO/git/ref/tags/v2.0.0" --jq .object.sha)" = "$OLD"
-          test -z "$(gh api --paginate "repos/$REPO/releases" --jq '.[] | select(.tag_name == "v2.0.0") | .id')"
-          gh api --method PATCH "repos/$REPO/git/refs/tags/v2.0.0" -f sha="$TARGET" -F force=true
-          gh workflow run build-windows.yml --repo "$REPO" --ref v2.0.0
+          found=false
+          for attempt in {1..45}; do
+            status=$(gh api "repos/$REPO/actions/runs/$BUILD_RUN" --jq .status)
+            if [[ "$status" == completed ]]; then
+              gh run download "$BUILD_RUN" --repo "$REPO" --name RVUNL-CBT-Mock-App-Windows --dir release
+              found=true
+              break
+            fi
+            sleep 12
+          done
+          test "$found" = true
+          test -s release/latest.yml
+          shopt -s nullglob
+          installers=(release/*Setup*.exe)
+          portable=()
+          for file in release/*.exe; do
+            [[ "$file" == *Setup* ]] || portable+=("$file")
+          done
+          test "${#installers[@]}" -eq 1
+          test "${#portable[@]}" -eq 1
+          test -s "${installers[0]}.blockmap"
+          checksum=$(openssl dgst -sha512 -binary "${installers[0]}" | openssl base64 -A)
+          grep -Fq "$checksum" release/latest.yml
+      - name: Upload all files to a single release and publish it
+        run: |
+          set -euo pipefail
+          releases=$(gh api --paginate "repos/$REPO/releases" | jq -s 'add')
+          test "$(jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag and .draft == false)] | length' <<<"$releases")" = 0
+          mapfile -t drafts < <(jq -r --arg tag "$TAG" '[.[] | select(.tag_name == $tag and .draft == true) | .id] | sort[]' <<<"$releases")
+          if [[ "${#drafts[@]}" -eq 0 ]]; then
+            id=$(gh api --method POST "repos/$REPO/releases" -f tag_name="$TAG" -f name="$TAG" -F draft=true --jq .id)
+          else
+            id="${drafts[0]}"
+          fi
+          for file in release/*.exe release/*.blockmap release/latest.yml; do
+            name=$(basename "$file")
+            size=$(stat -c%s "$file")
+            encoded=$(jq -rn --arg name "$name" '$name | @uri')
+            assets=$(gh api "repos/$REPO/releases/$id/assets")
+            asset=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<<"$assets")
+            if [[ -n "$asset" ]]; then
+              if jq -e --arg name "$name" --argjson size "$size" 'any(.[]; .name == $name and .state == "uploaded" and .size == $size)' <<<"$assets" >/dev/null; then continue; fi
+              gh api --method DELETE "repos/$REPO/releases/assets/$asset"
+            fi
+            gh api --method POST "https://uploads.github.com/repos/$REPO/releases/$id/assets?name=$encoded" -H 'Content-Type: application/octet-stream' --input "$file" --jq .name
+          done
+          gh api --method PATCH "repos/$REPO/releases/$id" -F draft=false -f make_latest=true --jq .html_url
+          for duplicate in "${drafts[@]:1}"; do
+            gh api --method DELETE "repos/$REPO/releases/$duplicate"
+          done
