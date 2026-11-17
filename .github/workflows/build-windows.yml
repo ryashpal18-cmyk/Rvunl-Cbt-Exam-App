@@ -12,6 +12,9 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    concurrency:
+      group: windows-${{ github.ref }}
+      cancel-in-progress: false
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
@@ -37,14 +40,7 @@ jobs:
         run: npm run build
 
       - name: Package Windows executables
-        if: "!startsWith(github.ref, 'refs/tags/v')"
         run: npx electron-builder --win --x64 --publish never
-
-      - name: Package and publish Windows release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64 --publish always
 
       - name: Verify installer and portable executables
         shell: pwsh
@@ -67,14 +63,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
+        shell: bash
         run: |
-          if (!(Test-Path release/latest.yml)) { throw 'Missing auto-update metadata.' }
-          $result = gh release view $env:GITHUB_REF_NAME --json assets --jq '.assets[].name'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $expected = @(Get-ChildItem release -File | Where-Object { $_.Extension -in '.exe', '.blockmap' -or $_.Name -eq 'latest.yml' })
-          foreach ($file in $expected) {
-            if ($result -notcontains $file.Name) { throw "Missing release asset $($file.Name)." }
-          }
-          gh release edit $env:GITHUB_REF_NAME --draft=false --latest
-          exit $LASTEXITCODE
+          set -euo pipefail
+          test -s release/latest.yml
+          files=(release/*.exe release/*.blockmap release/latest.yml)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}"
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
