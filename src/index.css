@@ -2,33 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color: #172033;
-  background: #f3f6fa;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
 }
 
-* { box-sizing: border-box; }
-html, body, #root { min-height: 100%; margin: 0; }
-body {
-  min-width: 1024px;
-  min-height: 100vh;
-  background: radial-gradient(circle at 90% 5%, rgba(216, 180, 254, 0.22), transparent 25%), radial-gradient(circle at 10% 30%, rgba(125, 211, 252, 0.18), transparent 25%), #f8fafc;
+.theme-dark {
+  filter: invert(0.92) hue-rotate(180deg);
 }
-button, input, select { font: inherit; }
-button:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 3px solid rgba(139, 92, 246, 0.35);
-  outline-offset: 2px;
-}
-::selection { background: #ddd6fe; color: #312e81; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #f1f5f9; }
-::-webkit-scrollbar-thumb { background: linear-gradient(#8b5cf6, #ec4899); border: 2px solid #f1f5f9; border-radius: 999px; }
 
-@layer components {
-  .card { @apply rounded-2xl border border-white/80 bg-white shadow-md shadow-slate-200/60; }
-  .btn-primary { @apply rounded-lg bg-gradient-to-r from-blue-800 to-violet-700 px-5 py-2.5 font-semibold text-white shadow-md transition hover:from-blue-900 hover:to-violet-800 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50; }
-  .btn-secondary { @apply rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-semibold text-slate-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-800; }
-  .eyebrow { @apply text-xs font-bold uppercase tracking-[0.18em] text-violet-600; }
+.theme-dark img,
+.theme-dark svg {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.theme-warm {
+  background-color: #fdf6e3 !important;
+  filter: sepia(0.18) brightness(0.98);
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
 }

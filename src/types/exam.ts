@@ -16,6 +16,7 @@ export type Difficulty = (typeof DIFFICULTIES)[number];
 export type Language = 'en' | 'hi';
 export type NegativeMarking = 'none' | 'quarter';
 export type UserId = string;
+export type ThemeMode = 'light' | 'dark' | 'warm';
 
 export interface Question {
   id: number;
@@ -61,6 +62,8 @@ export interface Attempt {
   negativeMarking: NegativeMarking;
   responses: Record<string, QuestionResponse>;
   submittedByTimer: boolean;
+  tabSwitchCount?: number;
+  sessionPaper?: Paper;
 }
 
 export interface ProfileRecord {
@@ -77,6 +80,7 @@ export interface StoredState {
 }
 
 export type UpdateState = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+
 export interface UpdateStatus {
   state: UpdateState;
   message: string;
@@ -88,6 +92,9 @@ export interface ExamConfig {
   language: Language;
   negativeMarking: NegativeMarking;
   strictOmnibus: boolean;
+  mouseOnly?: boolean;
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
 }
 
 export interface SubjectResult {
@@ -113,4 +120,36 @@ export interface ExamResult {
   percentage: number;
   accuracy: number;
   subjects: SubjectResult[];
+}
+
+export interface BookmarkedQuestion {
+  key: string;
+  paperId: string;
+  paperTitle: string;
+  question: Question;
+  savedAt: string;
+}
+
+export interface TypingAttempt {
+  id: string;
+  userId: UserId;
+  language: 'en' | 'hi';
+  durationMinutes: number;
+  grossWpm: number;
+  netWpm: number;
+  accuracy: number;
+  errorCount: number;
+  backspaceLocked: boolean;
+  timestamp: string;
+}
+
+export interface DraftExamState {
+  userId: UserId;
+  paper: Paper;
+  config: ExamConfig;
+  responses: Record<string, QuestionResponse>;
+  currentIndex: number;
+  remainingSeconds: number;
+  tabSwitchCount: number;
+  lastSavedAt: string;
 }

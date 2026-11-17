@@ -1,58 +1,229 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  Attempt,
+  DraftExamState,
+  ExamConfig,
+  Paper,
+  Question,
+  QuestionResponse,
+  StoredState,
+  ThemeMode,
+  UserId,
+} from './types/exam';
+import { loadBuiltInPapers } from './data/builtInPapers';
+import { storage } from './services/storage';
+import { getUserTheme, setUserTheme } from './services/userExtras';
+import { scoreExam } from './utils/scoring';
 import Dashboard from './components/Dashboard';
 import ExamScreen from './components/ExamScreen';
 import InstructionsModal from './components/InstructionsModal';
 import PaperReview from './components/PaperReview';
 import ProfileSelector from './components/ProfileSelector';
 import Scorecard from './components/Scorecard';
-import samplePaper from './data/sample_paper_01.json';
-import { Attempt, ExamConfig, Paper, ProfileRecord, QuestionResponse, StoredState, UserId } from './types/exam';
-import { calculateScore } from './utils/scoring';
-import { checkAdminPin, checkPin, createProfile, exportBackup, importBackup, loadState, persistAttempt, persistPapers, removePapers, removeProfile, resetStoredAttempts, saveAdminExport, updateAdminPin, updatePin } from './services/storage';
 
-type View = 'profiles' | 'dashboard' | 'instructions' | 'exam' | 'scorecard' | 'review';
-const builtInPaper = samplePaper as unknown as Paper;
+type Screen =
+  | { name: 'profile' }
+  | { name: 'dashboard' }
+  | { name: 'instructions'; paper: Paper }
+  | { name: 'exam'; paper: Paper; config: ExamConfig; draft?: DraftExamState | null }
+  | { name: 'scorecard'; attempt: Attempt; paper: Paper }
+  | { name: 'review'; attempt: Attempt; paper: Paper };
+
+const SKIP_OPTION_SHUFFLE_RE = /no error|all of these|none of these|उपरोक्त सभी|इनमें से कोई नहीं/i;
+
+function shuffleArray<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function buildSessionPaper(base: Paper, config: ExamConfig): Paper {
+  let questions: Question[] = base.questions.map((q) => ({ ...q }));
+  if (config.shuffleQuestions) {
+    questions = shuffleArray(questions);
+  }
+  if (config.shuffleOptions) {
+    questions = questions.map((q) => {
+      const hasFixedOption = q.options_en.some((o) => SKIP_OPTION_SHUFFLE_RE.test(o));
+      if (hasFixedOption) return q;
+      const order = shuffleArray([0, 1, 2, 3, 4]);
+      const options_en = order.map((idx) => q.options_en[idx]) as [string, string, string, string, string];
+      const options_hi = order.map((idx) => q.options_hi[idx]) as [string, string, string, string, string];
+      const correctIndex = order.indexOf(q.correctIndex);
+      return { ...q, options_en, options_hi, correctIndex };
+    });
+  }
+  return { ...base, questions };
+}
 
 export default function App() {
   const [state, setState] = useState<StoredState | null>(null);
-  const [loadError, setLoadError] = useState('');
   const [userId, setUserId] = useState<UserId | null>(null);
-  const [view, setView] = useState<View>('profiles');
-  const [paper, setPaper] = useState<Paper | null>(null);
-  const [config, setConfig] = useState<ExamConfig | null>(null);
-  const [attempt, setAttempt] = useState<Attempt | null>(null);
-  const papers = useMemo(() => [builtInPaper, ...(state?.papers ?? []).filter((item) => item.paperId !== builtInPaper.paperId)], [state?.papers]);
-  const profile = state?.profiles.find((item) => item.id === userId);
+  const [theme, setTheme] = useState<ThemeMode>('light');
+  const [screen, setScreen] = useState<Screen>({ name: 'profile' });
 
-  useEffect(() => { void loadState().then(setState).catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Could not open local storage.')); }, []);
-  const refresh = async () => setState(await loadState());
-  const login = async (id: UserId, pin?: string) => { const record = state?.profiles.find((item) => item.id === id); if (record?.pinConfigured && (!pin || !(await checkPin(id, pin)))) return false; setUserId(id); setView('dashboard'); return true; };
-  const setPin = async (id: UserId, pin: string | null, currentPin?: string) => { const record = state?.profiles.find((item) => item.id === id); if (record?.pinConfigured && (!currentPin || !(await checkPin(id, currentPin)))) return false; await updatePin(id, pin); await refresh(); return true; };
-  const selectPaper = (selected: Paper) => { setPaper(selected); setAttempt(null); setView('instructions'); };
-  const startExam = (selectedConfig: ExamConfig) => { setConfig(selectedConfig); setView('exam'); };
-  const submitExam = async (responses: Record<string, QuestionResponse>, timeTakenSeconds: number, submittedByTimer: boolean) => {
-    if (!paper || !config || !userId) return;
-    const result = calculateScore(paper, responses, config.negativeMarking);
-    const created: Attempt = { attemptId: `att_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`, userId, paperId: paper.paperId, paperTitle: paper.title, timestamp: new Date().toISOString(), timeTakenSeconds, totalScore: result.score, maxScore: result.maxScore, negativeMarking: config.negativeMarking, responses, submittedByTimer };
-    if (!paper.paperId.startsWith('mistakes-')) { await persistAttempt(created); setState((previous) => previous ? { ...previous, attempts: [created, ...previous.attempts] } : previous); }
-    setAttempt(created); setView('scorecard');
+  const builtInPapers = loadBuiltInPapers();
+
+  const reload = async () => {
+    const next = await storage.loadState(builtInPapers);
+    setState(next);
   };
-  const openAttempt = (selected: Attempt) => { const selectedPaper = papers.find((item) => item.paperId === selected.paperId); if (!selectedPaper) return; setPaper(selectedPaper); setAttempt(selected); setView('scorecard'); };
-  const importPapers = async (newPapers: Paper[], adminPin: string) => { const count = await persistPapers(newPapers, adminPin); const unique = Array.from(new Map(newPapers.map((item) => [item.paperId, item])).values()); setState((previous) => previous ? { ...previous, papers: [...unique, ...previous.papers.filter((item) => !new Set(unique.map((paperItem) => paperItem.paperId)).has(item.paperId))] } : previous); return count; };
-  const deletePapers = async (ids: string[], adminPin: string) => { const count = await removePapers(ids, adminPin); const selected = new Set(ids); setState((previous) => previous ? { ...previous, papers: previous.papers.filter((item) => !selected.has(item.paperId)) } : previous); return count; };
-  const resetResults = async (target: UserId | 'all', adminPin: string) => { const count = await resetStoredAttempts(target, adminPin); setState((previous) => previous ? { ...previous, attempts: target === 'all' ? [] : previous.attempts.filter((item) => item.userId !== target) } : previous); return count; };
-  const addStudent = async (name: string, adminPin: string) => { const created = await createProfile(name, adminPin); setState((previous) => previous ? { ...previous, profiles: [...previous.profiles, created] } : previous); return created; };
-  const deleteStudent = async (id: UserId, adminPin: string) => { const count = await removeProfile(id, adminPin); setState((previous) => previous ? { ...previous, profiles: previous.profiles.filter((item) => item.id !== id), attempts: previous.attempts.filter((item) => item.userId !== id) } : previous); return count; };
-  const restore = async (adminPin: string) => { const restored = await importBackup(adminPin); if (!restored) return false; setState(restored); if (userId && !restored.profiles.some((item) => item.id === userId)) { setUserId(null); setView('profiles'); } return true; };
-  const dashboard = () => { setPaper(null); setAttempt(null); setConfig(null); setView('dashboard'); };
 
-  if (loadError) return <div className="flex min-h-screen items-center justify-center bg-red-50 p-8"><div className="card max-w-lg p-8 text-center"><h1 className="text-2xl font-bold text-red-800">Local storage could not be opened</h1><p className="mt-3 text-red-700">{loadError}</p><button className="btn-primary mt-6" onClick={() => window.location.reload()}>Try again</button></div></div>;
-  if (!state) return <div className="flex min-h-screen items-center justify-center bg-canvas"><div className="h-12 w-12 animate-spin rounded-full border-4 border-slate-200 border-t-navy" /></div>;
-  if (view === 'profiles' || !userId || !profile) return <ProfileSelector profiles={state.profiles as ProfileRecord[]} onLogin={login} onSetPin={setPin} />;
-  if (view === 'dashboard') return <Dashboard userId={userId} userName={profile.name} profiles={state.profiles} attempts={state.attempts} papers={papers} onStart={selectPaper} onOpenAttempt={openAttempt} onVerifyAdminPin={checkAdminPin} onChangeAdminPin={updateAdminPin} onImportPapers={importPapers} onDeletePapers={deletePapers} onResetResults={resetResults} onAddProfile={addStudent} onDeleteProfile={deleteStudent} onExportBackup={exportBackup} onImportBackup={restore} onSaveExport={saveAdminExport} onLogout={() => { setUserId(null); setView('profiles'); }} />;
-  if (view === 'instructions' && paper) return <InstructionsModal paper={paper} onBack={dashboard} onStart={startExam} />;
-  if (view === 'exam' && paper && config) return <ExamScreen userId={userId} userName={profile.name} paper={paper} config={config} onSubmit={(responses, time, byTimer) => void submitExam(responses, time, byTimer)} />;
-  if (view === 'scorecard' && paper && attempt) return <Scorecard attempt={attempt} paper={paper} onReview={() => setView('review')} onDashboard={dashboard} />;
-  if (view === 'review' && paper && attempt) return <PaperReview attempt={attempt} paper={paper} onBack={() => setView('scorecard')} />;
-  return null;
+  useEffect(() => {
+    reload();
+  }, []);
+
+  const currentProfile = state?.profiles.find((p) => p.id === userId) ?? null;
+
+  const handleSelectProfile = (id: UserId) => {
+    setUserId(id);
+    setTheme(getUserTheme(id));
+    setScreen({ name: 'dashboard' });
+  };
+
+  const handleThemeChange = (next: ThemeMode) => {
+    setTheme(next);
+    if (userId) setUserTheme(userId, next);
+  };
+
+  const themeClass = theme === 'dark' ? 'theme-dark' : theme === 'warm' ? 'theme-warm' : '';
+
+  if (!state) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">
+        Loading RVUNL CBT Engine...
+      </div>
+    );
+  }
+
+  return (
+    <div className={`min-h-screen ${themeClass}`}>
+      {screen.name === 'profile' || !userId || !currentProfile ? (
+        <ProfileSelector
+          profiles={state.profiles}
+          onVerifyPin={(id, pin) => storage.verifyProfilePin(id, pin)}
+          onSelect={handleSelectProfile}
+        />
+      ) : null}
+
+      {screen.name === 'dashboard' && userId && currentProfile && (
+        <Dashboard
+          userId={userId}
+          userName={currentProfile.name}
+          profiles={state.profiles}
+          attempts={state.attempts}
+          papers={state.papers}
+          theme={theme}
+          onThemeChange={handleThemeChange}
+          onStart={(paperId) => {
+            const paper = state.papers.find((p) => p.paperId === paperId);
+            if (paper) setScreen({ name: 'instructions', paper });
+          }}
+          onStartVirtualPaper={(paper) => setScreen({ name: 'instructions', paper })}
+          onResumeDraft={(draft) => setScreen({ name: 'exam', paper: draft.paper, config: draft.config, draft })}
+          onOpenAttempt={(attempt) => {
+            const paper = attempt.sessionPaper ?? state.papers.find((p) => p.paperId === attempt.paperId);
+            if (paper) setScreen({ name: 'scorecard', attempt, paper });
+          }}
+          onLogout={() => {
+            setUserId(null);
+            setTheme('light');
+            setScreen({ name: 'profile' });
+          }}
+          onVerifyAdminPin={(pin) => storage.verifyAdminPin(pin)}
+          onChangeAdminPin={(oldPin, newPin) => storage.changeAdminPin(oldPin, newPin)}
+          onImportPapers={async (papers) => {
+            await storage.addPapers(papers);
+            await reload();
+          }}
+          onDeletePapers={async (ids) => {
+            await storage.deletePapers(ids);
+            await reload();
+          }}
+          onResetResults={async (target) => {
+            await storage.resetResults(target);
+            await reload();
+          }}
+          onAddProfile={async (name, pin) => {
+            const created = await storage.addProfile(name, pin);
+            await reload();
+            return created;
+          }}
+          onDeleteProfile={async (id) => {
+            await storage.deleteProfile(id);
+            await reload();
+          }}
+          onExportBackup={() => storage.exportBackup()}
+          onImportBackup={async (json) => {
+            await storage.importBackup(json);
+            await reload();
+          }}
+          onSaveExport={(data, defaultName) => storage.saveExportFile(data, defaultName)}
+        />
+      )}
+
+      {screen.name === 'instructions' && (
+        <InstructionsModal
+          paper={screen.paper}
+          onCancel={() => setScreen({ name: 'dashboard' })}
+          onBegin={(config) => {
+            const sessionPaper = buildSessionPaper(screen.paper, config);
+            setScreen({ name: 'exam', paper: sessionPaper, config, draft: null });
+          }}
+        />
+      )}
+
+      {screen.name === 'exam' && userId && currentProfile && (
+        <ExamScreen
+          userId={userId}
+          userName={currentProfile.name}
+          paper={screen.paper}
+          config={screen.config}
+          initialDraft={screen.draft}
+          onSubmit={async (responses: Record<string, QuestionResponse>, timeTakenSeconds, submittedByTimer, tabSwitchCount) => {
+            const summary = scoreExam(screen.paper, responses, screen.config.negativeMarking);
+            const attempt: Attempt = {
+              attemptId: `att_${Date.now()}`,
+              userId,
+              paperId: screen.paper.paperId,
+              paperTitle: screen.paper.title,
+              timestamp: new Date().toISOString(),
+              timeTakenSeconds,
+              totalScore: summary.score,
+              maxScore: summary.maxScore,
+              negativeMarking: screen.config.negativeMarking,
+              responses,
+              submittedByTimer,
+              tabSwitchCount,
+              sessionPaper: screen.paper,
+            };
+            await storage.saveAttempt(attempt);
+            await reload();
+            setScreen({ name: 'scorecard', attempt, paper: screen.paper });
+          }}
+        />
+      )}
+
+      {screen.name === 'scorecard' && (
+        <Scorecard
+          attempt={screen.attempt}
+          paper={screen.paper}
+          onReview={() => setScreen({ name: 'review', attempt: screen.attempt, paper: screen.paper })}
+          onDashboard={() => setScreen({ name: 'dashboard' })}
+        />
+      )}
+
+      {screen.name === 'review' && userId && (
+        <PaperReview
+          userId={userId}
+          attempt={screen.attempt}
+          paper={screen.paper}
+          onBack={() => setScreen({ name: 'scorecard', attempt: screen.attempt, paper: screen.paper })}
+        />
+      )}
+    </div>
+  );
 }

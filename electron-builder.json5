@@ -10,7 +10,15 @@
     "package.json"
   ],
   asar: true,
+  publish: [
+    {
+      provider: "github",
+      owner: "ryashpal18-cmyk",
+      repo: "Rvunl-Cbt-Exam-App"
+    }
+  ],
   win: {
+    icon: "build/icon.png",
     target: [
       { target: "nsis", arch: ["x64"] },
       { target: "portable", arch: ["x64"] }
@@ -22,13 +30,5 @@
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: "RVUNL CBT Mock Exam"
-  },
-  publish: [
-    {
-      provider: "github",
-      owner: "ryashpal18-cmyk",
-      repo: "Rvunl-Cbt-Exam-App",
-      releaseType: "release"
-    }
-  ]
+  }
 }

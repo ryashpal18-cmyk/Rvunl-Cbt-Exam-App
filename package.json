@@ -1,8 +1,8 @@
 {
   "name": "rvunl-cbt-exam-app",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Offline RVUNL Junior Assistant Phase-I CBT mock exam desktop app",
+  "description": "Offline RVUNL Junior Assistant Phase-I CBT mock exam & Phase-II typing desktop app",
   "author": "RVUNL CBT Exam App",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
+    "jszip": "^3.10.1",
     "lucide-react": "0.468.0",
     "pdf-lib": "^1.17.1",
     "react": "18.3.1",
@@ -35,7 +36,6 @@
     "postcss": "^8.5.33",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.2",
-    "vite": "^6.4.6",
     "wait-on": "8.0.1"
   }
 }

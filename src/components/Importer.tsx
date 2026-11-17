@@ -1,121 +1,325 @@
-import { ChangeEvent, useRef, useState } from 'react';
-import { CheckCircle2, Download, FileJson2, FileSpreadsheet, UploadCloud, XCircle } from 'lucide-react';
-import { readSheet } from 'read-excel-file/browser';
-import { DIFFICULTIES, Difficulty, PAPER_CATEGORIES, Paper, PaperCategory, Question, SUBJECTS } from '../types/exam';
+import { useRef, useState } from 'react';
+import JSZip from 'jszip';
+import readSheet from 'read-excel-file/browser';
+import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Upload } from 'lucide-react';
+import { DIFFICULTIES, PAPER_CATEGORIES, Paper, PaperCategory, Question, SUBJECTS, Subject } from '../types/exam';
 
 interface Props {
   onImport: (papers: Paper[]) => Promise<void>;
   onDownloadTemplate: (data: Uint8Array) => Promise<void>;
 }
-interface ImportMessage { imported: string[]; errors: string[]; }
-const optionKeys = ['a', 'b', 'c', 'd', 'e'];
-const templateHeaders = ['id', 'subject', 'marks', 'question_en', 'question_hi', 'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en', 'option_a_hi', 'option_b_hi', 'option_c_hi', 'option_d_hi', 'option_e_hi', 'correctIndex', 'explanation_en', 'explanation_hi'];
 
-function tableToRows(table: unknown[][]): Record<string, unknown>[] {
-  const [headerRow, ...dataRows] = table;
-  if (!headerRow) return [];
-  const headers = headerRow.map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim());
-  return dataRows.filter((row) => row.some((cell) => cell !== null && cell !== '')).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ''])));
-}
+const VALID_SUBJECTS = new Set<string>(SUBJECTS);
+const MARKS_BY_SUBJECT: Record<Subject, number> = {
+  'Rajasthan GK': 2,
+  'World, India & Everyday Science': 2,
+  'Reasoning & Mental Ability': 1,
+  'Hindi General': 1,
+  'English General': 1,
+  'Mathematics': 1,
+};
 
-function parseCsv(text: string): Record<string, unknown>[] {
-  const table: string[][] = []; let row: string[] = []; let field = ''; let quoted = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === '"' && quoted && text[index + 1] === '"') { field += '"'; index += 1; }
-    else if (char === '"') quoted = !quoted;
-    else if (char === ',' && !quoted) { row.push(field); field = ''; }
-    else if ((char === '\n' || char === '\r') && !quoted) { if (char === '\r' && text[index + 1] === '\n') index += 1; row.push(field); table.push(row); row = []; field = ''; }
-    else field += char;
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      if (row.some((c) => c.trim().length > 0)) rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
   }
-  if (field || row.length) { row.push(field); table.push(row); }
-  return tableToRows(table);
-}
-
-function value(row: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) if (row[key] !== undefined && row[key] !== null) return String(row[key]).trim();
-  return '';
-}
-
-function rowsToPaper(rows: Record<string, unknown>[], fileName: string): Paper {
-  const questions: Question[] = rows.map((row, index) => {
-    const correctRaw = value(row, 'correctIndex', 'correct_index', 'correctAnswer', 'correct_answer').toUpperCase();
-    const correctIndex = correctRaw === '' ? -1 : /^[A-E]$/.test(correctRaw) ? correctRaw.charCodeAt(0) - 65 : Number(correctRaw);
-    return { id: Number(value(row, 'id', 'question_id')) || index + 1, subject: value(row, 'subject') as Question['subject'], marks: Number(value(row, 'marks')), question_en: value(row, 'question_en', 'questionEnglish'), question_hi: value(row, 'question_hi', 'questionHindi'), options_en: optionKeys.map((key) => value(row, `option_${key}_en`, `option${key.toUpperCase()}_en`)) as Question['options_en'], options_hi: optionKeys.map((key) => value(row, `option_${key}_hi`, `option${key.toUpperCase()}_hi`)) as Question['options_hi'], correctIndex, explanation_en: value(row, 'explanation_en', 'explanationEnglish'), explanation_hi: value(row, 'explanation_hi', 'explanationHindi') };
-  });
-  const first = rows[0] ?? {};
-  const slug = fileName.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported-paper';
-  return { paperId: `${slug}-${crypto.randomUUID().slice(0, 8)}`, title: value(first, 'paper_title', 'paperTitle') || fileName.replace(/\.[^.]+$/, ''), durationMinutes: Number(value(first, 'duration_minutes', 'durationMinutes')) || 60, questions, imported: true, importedAt: new Date().toISOString() };
-}
-
-function validatePaper(input: unknown): Paper {
-  if (!input || typeof input !== 'object') throw new Error('The file does not contain a paper object.');
-  const paper = input as Paper;
-  if (!paper.paperId || !paper.title) throw new Error('paperId and title are required.');
-  if (!Array.isArray(paper.questions) || paper.questions.length !== 70) throw new Error('A paper must contain exactly 70 questions.');
-  const ids = new Set<number>();
-  for (const [index, question] of paper.questions.entries()) {
-    if (!Number.isInteger(question.id) || ids.has(question.id)) throw new Error(`Question ${index + 1} has an invalid or duplicate id.`);
-    ids.add(question.id);
-    if (!SUBJECTS.includes(question.subject)) throw new Error(`Question ${question.id} has an unsupported subject.`);
-    if (![1, 2].includes(Number(question.marks))) throw new Error(`Question ${question.id} marks must be 1 or 2.`);
-    if (!question.question_en || !question.question_hi || !question.explanation_en || !question.explanation_hi) throw new Error(`Question ${question.id} is missing bilingual text or an explanation.`);
-    if (!Array.isArray(question.options_en) || !Array.isArray(question.options_hi) || question.options_en.length !== 5 || question.options_hi.length !== 5 || question.options_en.some((item) => !item) || question.options_hi.some((item) => !item)) throw new Error(`Question ${question.id} must have five options in both languages.`);
-    if (!Number.isInteger(question.correctIndex) || question.correctIndex < 0 || question.correctIndex > 4) throw new Error(`Question ${question.id} correctIndex must be 0–4 (or A–E in a spreadsheet).`);
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    if (row.some((c) => c.trim().length > 0)) rows.push(row);
   }
-  const maxScore = paper.questions.reduce((sum, question) => sum + Number(question.marks), 0);
-  if (maxScore !== 100) throw new Error(`Question marks total ${maxScore}; an RVUNL Phase-I paper must total 100.`);
-  return { ...paper, durationMinutes: Number(paper.durationMinutes) || 60, imported: true, importedAt: new Date().toISOString() };
+  return rows;
 }
 
-async function parseFile(file: File): Promise<Paper> {
-  const lowerName = file.name.toLowerCase();
-  if (lowerName.endsWith('.json')) return validatePaper(JSON.parse(await file.text()));
-  if (lowerName.endsWith('.csv')) return validatePaper(rowsToPaper(parseCsv(await file.text()), file.name));
-  if (lowerName.endsWith('.xlsx')) return validatePaper(rowsToPaper(tableToRows(await readSheet(file)), file.name));
-  throw new Error('Only JSON, XLSX, and CSV files are supported.');
-}
-
-function createTemplate(): Uint8Array {
-  const rows = Array.from({ length: 70 }, (_, index) => {
-    const id = index + 1;
-    const subject = id <= 23 ? SUBJECTS[0] : id <= 30 ? SUBJECTS[1] : id <= 40 ? SUBJECTS[2] : id <= 50 ? SUBJECTS[3] : id <= 60 ? SUBJECTS[4] : SUBJECTS[5];
-    const marks = id <= 30 ? 2 : 1;
-    return [id, subject, marks, ...Array(15).fill('')].map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+function validatePaper(raw: unknown, fallbackTitle: string): Paper {
+  const p = raw as Partial<Paper>;
+  if (!p || typeof p !== 'object' || !Array.isArray(p.questions) || p.questions.length === 0) {
+    throw new Error(`${fallbackTitle}: Invalid JSON — missing non-empty questions array.`);
+  }
+  const questions: Question[] = p.questions.map((q, idx) => {
+    if (!VALID_SUBJECTS.has(q.subject)) {
+      throw new Error(`${fallbackTitle} Q${idx + 1}: Invalid subject "${q.subject}".`);
+    }
+    if (!Array.isArray(q.options_en) || q.options_en.length !== 5 || !Array.isArray(q.options_hi) || q.options_hi.length !== 5) {
+      throw new Error(`${fallbackTitle} Q${idx + 1}: Must have exactly 5 English and 5 Hindi options.`);
+    }
+    if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 4) {
+      throw new Error(`${fallbackTitle} Q${idx + 1}: correctIndex must be 0–4.`);
+    }
+    const subject = q.subject as Subject;
+    return {
+      id: typeof q.id === 'number' ? q.id : idx + 1,
+      subject,
+      marks: typeof q.marks === 'number' ? q.marks : MARKS_BY_SUBJECT[subject],
+      question_en: String(q.question_en ?? ''),
+      question_hi: String(q.question_hi ?? q.question_en ?? ''),
+      options_en: q.options_en.map(String) as [string, string, string, string, string],
+      options_hi: q.options_hi.map(String) as [string, string, string, string, string],
+      correctIndex: q.correctIndex,
+      explanation_en: String(q.explanation_en ?? ''),
+      explanation_hi: String(q.explanation_hi ?? q.explanation_en ?? ''),
+    };
   });
-  return new TextEncoder().encode(`\uFEFF${templateHeaders.join(',')}\r\n${rows.join('\r\n')}`);
+
+  const category: PaperCategory = p.category && (PAPER_CATEGORIES as readonly string[]).includes(p.category)
+    ? p.category
+    : 'Custom';
+  const difficulty = p.difficulty && (DIFFICULTIES as readonly string[]).includes(p.difficulty)
+    ? p.difficulty
+    : 'Medium';
+
+  return {
+    paperId: p.paperId || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    title: p.title || fallbackTitle.replace(/\.[^.]+$/, ''),
+    durationMinutes: typeof p.durationMinutes === 'number' && p.durationMinutes > 0 ? p.durationMinutes : 60,
+    questions,
+    imported: true,
+    importedAt: new Date().toISOString(),
+    category,
+    difficulty,
+    year: typeof p.year === 'number' ? p.year : undefined,
+  };
+}
+
+function rowsToPaper(rows: unknown[][], title: string): Paper {
+  if (rows.length < 2) throw new Error(`${title}: Empty sheet — add header + at least 1 question row.`);
+  const headers = rows[0].map((h) => String(h ?? '').trim().toLowerCase());
+  const col = (name: string) => headers.indexOf(name);
+  const required = ['subject', 'question_en', 'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en', 'correct'];
+  for (const r of required) {
+    if (col(r) === -1) throw new Error(`${title}: Missing required column "${r}".`);
+  }
+
+  const questions: Question[] = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const r = rows[i];
+    if (!r || r.every((c) => c === null || c === undefined || String(c).trim() === '')) continue;
+    const get = (name: string) => {
+      const idx = col(name);
+      return idx >= 0 ? String(r[idx] ?? '').trim() : '';
+    };
+    const subjectRaw = get('subject');
+    if (!VALID_SUBJECTS.has(subjectRaw)) {
+      throw new Error(`${title} Row ${i + 1}: Invalid subject "${subjectRaw}".`);
+    }
+    const subject = subjectRaw as Subject;
+    const corrRaw = get('correct').toUpperCase();
+    const corrIdx = ['A', 'B', 'C', 'D', 'E'].indexOf(corrRaw);
+    const numIdx = Number(corrRaw);
+    const correctIndex = corrIdx >= 0 ? corrIdx : (!Number.isNaN(numIdx) && numIdx >= 0 && numIdx <= 4 ? numIdx : -1);
+    if (correctIndex < 0) {
+      throw new Error(`${title} Row ${i + 1}: "correct" must be A–E (or 0–4).`);
+    }
+    const optsEn = [get('option_a_en'), get('option_b_en'), get('option_c_en'), get('option_d_en'), get('option_e_en')] as [string, string, string, string, string];
+    const optsHi = [
+      get('option_a_hi') || optsEn[0],
+      get('option_b_hi') || optsEn[1],
+      get('option_c_hi') || optsEn[2],
+      get('option_d_hi') || optsEn[3],
+      get('option_e_hi') || optsEn[4],
+    ] as [string, string, string, string, string];
+
+    questions.push({
+      id: Number(get('id')) || questions.length + 1,
+      subject,
+      marks: Number(get('marks')) || MARKS_BY_SUBJECT[subject],
+      question_en: get('question_en'),
+      question_hi: get('question_hi') || get('question_en'),
+      options_en: optsEn,
+      options_hi: optsHi,
+      correctIndex,
+      explanation_en: get('explanation_en'),
+      explanation_hi: get('explanation_hi') || get('explanation_en'),
+    });
+  }
+  if (questions.length === 0) throw new Error(`${title}: No valid question rows found.`);
+  return {
+    paperId: `imported_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    title: title.replace(/\.[^.]+$/, ''),
+    durationMinutes: 60,
+    questions,
+    imported: true,
+    importedAt: new Date().toISOString(),
+    category: 'Custom',
+    difficulty: 'Medium',
+  };
 }
 
 export default function Importer({ onImport, onDownloadTemplate }: Props) {
-  const input = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState<ImportMessage | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [category, setCategory] = useState<PaperCategory>('Full Mock');
-  const [difficulty, setDifficulty] = useState<Difficulty>('Medium');
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const pickFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []); event.target.value = '';
-    if (!files.length) return;
-    setBusy(true); setMessage(null);
-    const papers: Paper[] = []; const errors: string[] = [];
-    for (const file of files) {
-      try { papers.push({ ...(await parseFile(file)), category, difficulty, year }); }
-      catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Could not read this file.'}`); }
+  const parseFileBuffer = async (name: string, buffer: ArrayBuffer): Promise<Paper> => {
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (ext === 'json') {
+      const text = new TextDecoder().decode(buffer);
+      return validatePaper(JSON.parse(text), name);
     }
-    try { if (papers.length) await onImport(papers); setMessage({ imported: papers.map((paper) => paper.title), errors }); }
-    catch (error) { setMessage({ imported: [], errors: [error instanceof Error ? error.message : 'Could not save the selected papers.'] }); }
-    finally { setBusy(false); }
+    if (ext === 'csv') {
+      const text = new TextDecoder().decode(buffer);
+      return rowsToPaper(parseCsv(text), name);
+    }
+    if (ext === 'xlsx') {
+      const rows = await readSheet(buffer);
+      return rowsToPaper(rows as unknown[][], name);
+    }
+    throw new Error(`${name}: Unsupported file format.`);
   };
 
-  return <section>
-    <div className="rounded-2xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-orange-500 p-[1px] shadow-lg shadow-violet-200/60"><div className="rounded-2xl bg-white p-6">
-      <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">Bulk paper uploader</p><h2 className="mt-2 text-2xl font-bold">Import many mock papers together</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Select many files in one step. Every file is checked separately, so one invalid file does not block valid papers.</p></div><button className="btn-secondary flex shrink-0 items-center gap-2 text-sm" onClick={() => void onDownloadTemplate(createTemplate())}><Download size={17} /> Download CSV template</button></div>
-      <div className="mt-5 grid grid-cols-3 gap-3"><label className="text-xs font-bold text-slate-600">Category<select className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" value={category} onChange={(event) => setCategory(event.target.value as PaperCategory)}>{PAPER_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-xs font-bold text-slate-600">Difficulty<select className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}>{DIFFICULTIES.map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-xs font-bold text-slate-600">Year<input className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2.5" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label></div>
-      <input ref={input} multiple className="hidden" type="file" accept=".json,.xlsx,.csv" onChange={(event) => void pickFiles(event)} />
-      <button disabled={busy} className="mt-6 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-violet-300 bg-gradient-to-br from-violet-50 via-fuchsia-50 to-orange-50 p-9 text-center transition hover:border-violet-600 hover:shadow-md" onClick={() => input.current?.click()}><span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white shadow-lg"><UploadCloud size={34} /></span><b className="mt-4 text-xl text-slate-900">{busy ? 'Checking selected papers…' : 'Choose one or many paper files'}</b><span className="mt-2 text-sm text-slate-500">Use Ctrl/Shift to select multiple files · JSON · XLSX · CSV</span></button>
-    </div></div>
-    {message && <div className="mt-5 space-y-3">{message.imported.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 size={19} /> {message.imported.length} paper{message.imported.length === 1 ? '' : 's'} imported</p><p className="mt-1 text-sm">{message.imported.join(', ')}</p></div>}{message.errors.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900"><p className="flex items-center gap-2 font-bold"><XCircle size={19} /> {message.errors.length} file{message.errors.length === 1 ? '' : 's'} could not be imported</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{message.errors.map((error) => <li key={error}>{error}</li>)}</ul></div>}</div>}
-    <div className="mt-5 grid grid-cols-2 gap-5"><div className="card border-l-4 border-l-orange-400 p-5"><FileJson2 className="text-orange-500" /><h3 className="mt-3 font-bold">JSON format</h3><p className="mt-2 text-sm leading-6 text-slate-500">Use the built-in paper schema with bilingual question fields.</p></div><div className="card border-l-4 border-l-emerald-500 p-5"><FileSpreadsheet className="text-emerald-600" /><h3 className="mt-3 font-bold">Ready template</h3><p className="mt-2 text-sm leading-6 text-slate-500">The CSV template already contains 70 IDs, subjects, and the correct 100-mark distribution.</p></div></div>
-  </section>;
+  const handleFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setBusy(true);
+    setStatus(null);
+    const imported: Paper[] = [];
+    const errors: string[] = [];
+
+    try {
+      for (const file of Array.from(fileList)) {
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        if (ext === 'zip') {
+          try {
+            const zip = await JSZip.loadAsync(await file.arrayBuffer());
+            const entries = Object.values(zip.files).filter(
+              (entry) => !entry.dir && /\.(json|csv|xlsx)$/i.test(entry.name) && !entry.name.startsWith('__MACOSX')
+            );
+            if (entries.length === 0) {
+              errors.push(`${file.name}: No .json, .csv, or .xlsx files found inside archive.`);
+              continue;
+            }
+            for (const entry of entries) {
+              try {
+                const buf = await entry.async('arraybuffer');
+                const baseName = entry.name.split('/').pop() || entry.name;
+                imported.push(await parseFileBuffer(baseName, buf));
+              } catch (err) {
+                errors.push(err instanceof Error ? err.message : `${entry.name}: Failed to parse.`);
+              }
+            }
+          } catch (err) {
+            errors.push(`${file.name}: ${err instanceof Error ? err.message : 'Invalid ZIP archive.'}`);
+          }
+        } else {
+          try {
+            imported.push(await parseFileBuffer(file.name, await file.arrayBuffer()));
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : `${file.name}: Failed to parse.`);
+          }
+        }
+      }
+
+      if (imported.length > 0) {
+        await onImport(imported);
+      }
+
+      if (imported.length > 0 && errors.length === 0) {
+        setStatus({ ok: true, text: `Imported ${imported.length} paper${imported.length > 1 ? 's' : ''} successfully.` });
+      } else if (imported.length > 0 && errors.length > 0) {
+        setStatus({
+          ok: true,
+          text: `Imported ${imported.length} paper(s). Skipped ${errors.length}: ${errors.slice(0, 2).join(' | ')}`,
+        });
+      } else {
+        setStatus({ ok: false, text: errors.slice(0, 3).join(' | ') || 'No valid papers found.' });
+      }
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const downloadCsvTemplate = async () => {
+    const header = [
+      'id', 'subject', 'marks', 'question_en', 'question_hi',
+      'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en',
+      'option_a_hi', 'option_b_hi', 'option_c_hi', 'option_d_hi', 'option_e_hi',
+      'correct', 'explanation_en', 'explanation_hi',
+    ].join(',');
+    const sample = [
+      '1', 'Rajasthan GK', '2',
+      '"Which city is known as the Blue City of Rajasthan?"',
+      '"राजस्थान का कौन सा शहर ब्लू सिटी के नाम से जाना जाता है?"',
+      '"Jaipur"', '"Jodhpur"', '"Udaipur"', '"Bikaner"', '"Ajmer"',
+      '"जयपुर"', '"जोधपुर"', '"उदयपुर"', '"बीकानेर"', '"अजमेर"',
+      'B', '"Jodhpur is known as the Blue City."', '"जोधपुर को ब्लू सिटी कहा जाता है।"',
+    ].join(',');
+    const bytes = new TextEncoder().encode(`${header}\n${sample}\n`);
+    await onDownloadTemplate(bytes);
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h3 className="flex items-center gap-2 text-base font-bold text-slate-900">
+            <FileSpreadsheet className="h-5 w-5 text-blue-700" />
+            Bulk Paper Importer (.json, .xlsx, .csv, .zip)
+          </h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Select multiple mock paper files or a single .zip bundle containing up to 30+ papers at once.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={downloadCsvTemplate}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Download className="h-4 w-4" /> CSV Template
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => inputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+          >
+            <Upload className="h-4 w-4" /> {busy ? 'Importing...' : 'Import Papers / ZIP'}
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".json,.xlsx,.csv,.zip"
+            multiple
+            className="hidden"
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+        </div>
+      </div>
+
+      {status && (
+        <div className={`mt-4 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-semibold ${
+          status.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'
+        }`}>
+          {status.ok ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
+          <span>{status.text}</span>
+        </div>
+      )}
+    </div>
+  );
 }
