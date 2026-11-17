@@ -7,7 +7,7 @@ An offline Windows desktop mock-exam application for the RVUNL Junior Assistant 
 - Dedicated local profiles for **Monika** and **Shivani**, plus admin-created student profiles with optional hashed 4-digit PINs
 - PIN-protected Admin Settings for resetting any profile or all result history
 - Admin-only user creation, custom-user deletion, paper management, and PIN changes
-- Backup/restore for profiles, results, PIN hashes, and imported papers
+- Backup/restore for profiles, results, PIN hashes, bookmarks, typing history, and imported papers
 - Result export to Excel-compatible CSV and printable PDF
 - One built-in bilingual 70-question, 100-mark mock paper
 - Strict 60-minute timer with automatic submission
@@ -18,8 +18,8 @@ An offline Windows desktop mock-exam application for the RVUNL Junior Assistant 
 - Scorecard with subject-wise marks, accuracy, speed, and attempt history
 - Detailed correct, wrong, and skipped answer review with bilingual explanations
 - Per-profile Mistake Bank mini-tests
-- Monika/Shivani subject-accuracy comparison charts
-- Offline multi-file JSON, Excel (`.xlsx`), and CSV paper import with a downloadable CSV template
+- Per-profile score trends, streaks, bookmarks, weak-subject practice, and typing history
+- Offline multi-file JSON, Excel (`.xlsx`), CSV, and ZIP paper import with a downloadable CSV template
 - Paper category, difficulty, and year filters
 - Per-profile green completion indicators on attempted papers
 - In-app update checks, background download progress, and restart-to-install for the NSIS installer
@@ -41,7 +41,7 @@ The core exam and all saved data work offline. The optional software-update chec
 
 ## Local development
 
-Requirements: Node.js 20 and npm.
+Requirements: Node.js 22 and npm.
 
 ```bash
 npm ci
@@ -64,7 +64,7 @@ Output files are written to `release/`.
 
 ## Importing papers
 
-The admin importer accepts multiple `.json`, `.xlsx`, and `.csv` files in one selection. Every imported paper must contain exactly 70 questions totaling 100 marks. Invalid files are reported separately and do not block valid files in the same selection.
+The admin importer accepts multiple `.json`, `.xlsx`, `.csv`, and `.zip` files in one selection. Every imported paper must contain exactly 70 questions totaling 100 marks. Invalid files are reported separately and do not block valid files in the same selection.
 
 JSON papers follow the shape of [`src/data/sample_paper_01.json`](src/data/sample_paper_01.json).
 
@@ -81,9 +81,13 @@ correctIndex, explanation_en, explanation_hi
 
 ## Windows releases and automatic updates
 
-The workflow in [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) runs on every push to `main` and through manual dispatch. It uses the GitHub Actions run number as the patch version, so releases advance sequentially as `1.1.1`, `1.1.2`, and onward. The workflow publishes the installer, portable executable, blockmap, and update metadata to GitHub Releases and also uploads them as an Actions artifact.
+The workflow in [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml) builds Windows artifacts on branch pushes and manual dispatches. A tag that matches the version in `package.json` (for example `v2.0.0`) publishes the installer, portable executable, blockmap, and `latest.yml` to GitHub Releases. The Windows build also uploads these files to Actions as `RVUNL-CBT-Mock-App-Windows`.
 
-The installed NSIS edition can check, download, and install a newer release from the dashboard. The portable edition can check for a release but Windows portable executables cannot replace themselves reliably; portable users should download the new portable file from GitHub Releases.
+The installed NSIS edition can check, download, and install a newer release from the dashboard. The portable edition can check its current version in Settings. Download new portable builds from GitHub Releases.
+
+## Phase-II typing practice
+
+Choose English, Hindi Unicode/Mangal, or Hindi Kruti Dev and a 5-, 10-, or 15-minute timer. Kruti Dev mode uses the locally installed Kruti Dev 010 font with the English keyboard layout.
 
 ## Privacy and exam integrity
 

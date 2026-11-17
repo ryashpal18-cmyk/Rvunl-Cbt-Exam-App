@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import JSZip from 'jszip';
-import readSheet from 'read-excel-file/browser';
+import { readSheet } from 'read-excel-file/browser';
 import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Upload } from 'lucide-react';
 import { DIFFICULTIES, PAPER_CATEGORIES, Paper, PaperCategory, Question, SUBJECTS, Subject } from '../types/exam';
 
@@ -69,7 +69,7 @@ function validatePaper(raw: unknown, fallbackTitle: string): Paper {
     if (!Array.isArray(q.options_en) || q.options_en.length !== 5 || !Array.isArray(q.options_hi) || q.options_hi.length !== 5) {
       throw new Error(`${fallbackTitle} Q${idx + 1}: Must have exactly 5 English and 5 Hindi options.`);
     }
-    if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 4) {
+    if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex > 4) {
       throw new Error(`${fallbackTitle} Q${idx + 1}: correctIndex must be 0–4.`);
     }
     const subject = q.subject as Subject;
@@ -95,7 +95,7 @@ function validatePaper(raw: unknown, fallbackTitle: string): Paper {
     : 'Medium';
 
   return {
-    paperId: p.paperId || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    paperId: typeof p.paperId === 'string' && p.paperId.trim() ? p.paperId : `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     title: p.title || fallbackTitle.replace(/\.[^.]+$/, ''),
     durationMinutes: typeof p.durationMinutes === 'number' && p.durationMinutes > 0 ? p.durationMinutes : 60,
     questions,
@@ -111,7 +111,7 @@ function rowsToPaper(rows: unknown[][], title: string): Paper {
   if (rows.length < 2) throw new Error(`${title}: Empty sheet — add header + at least 1 question row.`);
   const headers = rows[0].map((h) => String(h ?? '').trim().toLowerCase());
   const col = (name: string) => headers.indexOf(name);
-  const required = ['subject', 'question_en', 'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en', 'correct'];
+  const required = ['subject', 'question_en', 'option_a_en', 'option_b_en', 'option_c_en', 'option_d_en', 'option_e_en'];
   for (const r of required) {
     if (col(r) === -1) throw new Error(`${title}: Missing required column "${r}".`);
   }
@@ -129,10 +129,10 @@ function rowsToPaper(rows: unknown[][], title: string): Paper {
       throw new Error(`${title} Row ${i + 1}: Invalid subject "${subjectRaw}".`);
     }
     const subject = subjectRaw as Subject;
-    const corrRaw = get('correct').toUpperCase();
+    const corrRaw = (get('correct') || get('correctindex')).toUpperCase();
     const corrIdx = ['A', 'B', 'C', 'D', 'E'].indexOf(corrRaw);
     const numIdx = Number(corrRaw);
-    const correctIndex = corrIdx >= 0 ? corrIdx : (!Number.isNaN(numIdx) && numIdx >= 0 && numIdx <= 4 ? numIdx : -1);
+    const correctIndex = corrIdx >= 0 ? corrIdx : (corrRaw !== '' && Number.isInteger(numIdx) && numIdx >= 0 && numIdx <= 4 ? numIdx : -1);
     if (correctIndex < 0) {
       throw new Error(`${title} Row ${i + 1}: "correct" must be A–E (or 0–4).`);
     }
@@ -178,19 +178,30 @@ export default function Importer({ onImport, onDownloadTemplate }: Props) {
 
   const parseFileBuffer = async (name: string, buffer: ArrayBuffer): Promise<Paper> => {
     const ext = name.split('.').pop()?.toLowerCase();
-    if (ext === 'json') {
-      const text = new TextDecoder().decode(buffer);
-      return validatePaper(JSON.parse(text), name);
+    const decode = () => new TextDecoder().decode(buffer);
+    let paper: Paper;
+    switch (ext) {
+      case 'json': paper = validatePaper(JSON.parse(decode()), name); break;
+      case 'csv': paper = rowsToPaper(parseCsv(decode()), name); break;
+      case 'xlsx': paper = rowsToPaper(await readSheet(buffer), name); break;
+      default: throw new Error(`${name}: Unsupported file format.`);
     }
-    if (ext === 'csv') {
-      const text = new TextDecoder().decode(buffer);
-      return rowsToPaper(parseCsv(text), name);
+    const ids = new Set<number>();
+    let totalMarks = 0;
+    for (const question of paper.questions) {
+      if (!Number.isInteger(question.id) || ids.has(question.id) ||
+          question.marks !== MARKS_BY_SUBJECT[question.subject] ||
+          !question.question_en.trim() || !question.question_hi.trim() ||
+          [...question.options_en, ...question.options_hi].some((option) => !option.trim())) {
+        throw new Error(`${name}: Invalid question ID, marks, prompt or options at question ${question.id}.`);
+      }
+      ids.add(question.id);
+      totalMarks += question.marks;
     }
-    if (ext === 'xlsx') {
-      const rows = await readSheet(buffer);
-      return rowsToPaper(rows as unknown[][], name);
+    if (ids.size !== 70 || totalMarks !== 100 || !Number.isFinite(paper.durationMinutes)) {
+      throw new Error(`${name}: A mock paper must contain 70 questions totaling 100 marks and a valid duration.`);
     }
-    throw new Error(`${name}: Unsupported file format.`);
+    return paper;
   };
 
   const handleFiles = async (fileList: FileList | null) => {
@@ -248,6 +259,8 @@ export default function Importer({ onImport, onDownloadTemplate }: Props) {
       } else {
         setStatus({ ok: false, text: errors.slice(0, 3).join(' | ') || 'No valid papers found.' });
       }
+    } catch (error) {
+      setStatus({ ok: false, text: error instanceof Error ? error.message : 'Could not save imported papers.' });
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';

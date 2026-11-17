@@ -23,6 +23,9 @@
 }
 
 @media print {
+  .theme-dark, .theme-dark img, .theme-dark svg, .theme-warm {
+    filter: none !important;
+  }
   .no-print {
     display: none !important;
   }

@@ -61,7 +61,7 @@ export function loadExamDraft(userId: UserId): DraftExamState | null {
     const raw = localStorage.getItem(KEY('draft', userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DraftExamState;
-    if (!parsed?.paper?.questions?.length || parsed.remainingSeconds <= 0) return null;
+    if (parsed?.userId !== userId || !parsed.paper?.questions?.length || parsed.remainingSeconds <= 0) return null;
     return parsed;
   } catch {
     return null;
@@ -85,11 +85,13 @@ export function exportUserExtrasJson(userId: UserId): string {
 
 export function importUserExtrasJson(userId: UserId, raw: string): void {
   const data = JSON.parse(raw) as {
+    userId?: UserId;
     theme?: ThemeMode;
     bookmarks?: BookmarkedQuestion[];
     typingAttempts?: TypingAttempt[];
   };
-  if (data.theme) setUserTheme(userId, data.theme);
+  if (data.userId !== userId) throw new Error('This backup belongs to a different profile.');
+  if (data.theme === 'light' || data.theme === 'dark' || data.theme === 'warm') setUserTheme(userId, data.theme);
   if (Array.isArray(data.bookmarks)) localStorage.setItem(KEY('bookmarks', userId), JSON.stringify(data.bookmarks));
-  if (Array.isArray(data.typingAttempts)) localStorage.setItem(KEY('typing', userId), JSON.stringify(data.typingAttempts));
+  if (Array.isArray(data.typingAttempts)) localStorage.setItem(KEY('typing', userId), JSON.stringify(data.typingAttempts.filter((attempt) => attempt?.userId === userId)));
 }

@@ -18,8 +18,15 @@ const HINDI_PASSAGES = [
   'सरकारी कार्यालयों में दैनिक पत्राचार, अभिलेख संधारण तथा जनसेवा से जुड़े कार्यों के निष्पादन के लिए हिंदी यूनिकोड एवं मंगल फॉन्ट में कुशल टंकण आवश्यक है। एकाग्रता बनाए रखते हुए गलतियों को कम करना ही उच्च शुद्धता और बेहतर नेट गति प्राप्त करने का सबसे प्रभावी उपाय है।',
 ];
 
+const KRUTI_DEV_PASSAGES = [
+  'jktLFkku Hkkjr dk ,d jkT; gSA t;iqj jktLFkku dh jkt/kkuh gSA',
+  "gekjk ns'k Hkkjr gSA gesa vius ns'k ij xoZ gSA",
+];
+
+type TypingMode = 'en' | 'hi' | 'hi-kruti';
+
 export default function TypingPractice({ userId, userName }: Props) {
-  const [language, setLanguage] = useState<'en' | 'hi'>('en');
+  const [language, setLanguage] = useState<TypingMode>('en');
   const [durationMin, setDurationMin] = useState<5 | 10 | 15>(5);
   const [lockBackspace, setLockBackspace] = useState(false);
   const [passageIndex, setPassageIndex] = useState(0);
@@ -34,14 +41,16 @@ export default function TypingPractice({ userId, userName }: Props) {
     setHistory(getTypingAttempts(userId));
   }, [userId]);
 
+  const legacyFont = language === 'hi-kruti' ? { fontFamily: '"Kruti Dev 010", monospace', fontSize: '1.25rem' } : undefined;
   const passage = useMemo(() => {
-    const list = language === 'en' ? ENGLISH_PASSAGES : HINDI_PASSAGES;
-    return list[passageIndex % list.length];
-  }, [language, passageIndex]);
+    const list = language === 'en' ? ENGLISH_PASSAGES : language === 'hi-kruti' ? KRUTI_DEV_PASSAGES : HINDI_PASSAGES;
+    const paragraph = list[passageIndex % list.length].normalize('NFC');
+    return Array(Math.ceil((durationMin * 70) / paragraph.trim().split(/\s+/).length)).fill(paragraph).join(' ');
+  }, [durationMin, language, passageIndex]);
 
   const metrics = useMemo(() => {
     const refWords = passage.trim().split(/\s+/);
-    const typedWords = typed.trim() ? typed.trim().split(/\s+/) : [];
+    const typedWords = typed.trim() ? typed.trim().normalize('NFC').split(/\s+/) : [];
     let errorWords = 0;
     for (let i = 0; i < typedWords.length; i += 1) {
       if (typedWords[i] !== refWords[i]) errorWords += 1;
@@ -63,7 +72,8 @@ export default function TypingPractice({ userId, userName }: Props) {
     const record: TypingAttempt = {
       id: `typ_${Date.now()}`,
       userId,
-      language,
+      language: language === 'en' ? 'en' : 'hi',
+      ...(language === 'hi-kruti' && { keyboardLayout: 'kruti-dev' as const }),
       durationMinutes: durationMin,
       grossWpm: metrics.grossWpm,
       netWpm: metrics.netWpm,
@@ -78,16 +88,11 @@ export default function TypingPractice({ userId, userName }: Props) {
   useEffect(() => {
     if (!running) return;
     const id = window.setInterval(() => {
-      setRemainingSec((prev) => {
-        if (prev <= 1) {
-          window.clearInterval(id);
-          return 0;
-        }
-        return prev - 1;
-      });
+      const elapsed = Math.floor((Date.now() - (startRef.current ?? Date.now())) / 1000);
+      setRemainingSec(Math.max(0, durationMin * 60 - elapsed));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [running]);
+  }, [durationMin, running]);
 
   useEffect(() => {
     if (running && remainingSec === 0) {
@@ -125,7 +130,7 @@ export default function TypingPractice({ userId, userName }: Props) {
               Phase-II Typing Practice ({userName})
             </h2>
             <p className="text-xs text-slate-500">
-              RVUNL Phase-II Skill Test practice (English &amp; Hindi Unicode/Mangal). Metrics are saved per profile.
+              RVUNL Phase-II Skill Test practice (English &amp; Hindi). Metrics are saved per profile.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -133,13 +138,14 @@ export default function TypingPractice({ userId, userName }: Props) {
               value={language}
               disabled={running}
               onChange={(e) => {
-                setLanguage(e.target.value as 'en' | 'hi');
+                setLanguage(e.target.value as TypingMode);
                 resetTest();
               }}
               className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
             >
               <option value="en">English Typing</option>
               <option value="hi">Hindi (Unicode / Mangal)</option>
+              <option value="hi-kruti">Hindi (Kruti Dev 010)</option>
             </select>
             <select
               value={durationMin}
@@ -192,7 +198,8 @@ export default function TypingPractice({ userId, userName }: Props) {
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800">
+        {language === 'hi-kruti' && <p className="mt-4 text-xs text-slate-600">Install Kruti Dev 010 in Windows to show the passage in Hindi. Type using the English keyboard and the Kruti Dev key mapping.</p>}
+        <div style={legacyFont} className="mt-4 max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-800">
           {metrics.refWords.map((word, idx) => {
             const typedWord = metrics.typedWords[idx];
             let cls = 'text-slate-800';
@@ -210,6 +217,9 @@ export default function TypingPractice({ userId, userName }: Props) {
         </div>
 
         <textarea
+          style={legacyFont}
+          onPaste={(event) => event.preventDefault()}
+          onDrop={(event) => event.preventDefault()}
           value={typed}
           disabled={finished}
           onChange={(e) => handleInputChange(e.target.value)}
@@ -277,7 +287,7 @@ export default function TypingPractice({ userId, userName }: Props) {
                 {history.slice(0, 10).map((h) => (
                   <tr key={h.id} className="border-b border-slate-100">
                     <td className="py-2 pr-3 text-slate-600">{new Date(h.timestamp).toLocaleDateString()}</td>
-                    <td className="py-2 pr-3 font-semibold">{h.language === 'en' ? 'English' : 'Hindi'}</td>
+                    <td className="py-2 pr-3 font-semibold">{h.language === 'en' ? 'English' : h.keyboardLayout === 'kruti-dev' ? 'Hindi (Kruti Dev)' : 'Hindi'}</td>
                     <td className="py-2 pr-3">{h.durationMinutes} min</td>
                     <td className="py-2 pr-3 font-bold text-blue-800">{h.grossWpm} / {h.netWpm}</td>
                     <td className="py-2 pr-3 font-semibold text-emerald-700">{h.accuracy}%</td>

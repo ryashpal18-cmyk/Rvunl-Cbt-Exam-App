@@ -10,7 +10,7 @@ interface Props {
   paper: Paper;
   config: ExamConfig;
   initialDraft?: DraftExamState | null;
-  onSubmit: (responses: Record<string, QuestionResponse>, timeTakenSeconds: number, submittedByTimer: boolean, tabSwitchCount: number) => void;
+  onSubmit: (responses: Record<string, QuestionResponse>, timeTakenSeconds: number, submittedByTimer: boolean, tabSwitchCount: number) => Promise<void>;
 }
 
 export default function ExamScreen({ userId, userName, paper, config, initialDraft, onSubmit }: Props) {
@@ -25,6 +25,9 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
   const initialRemaining = initialDraft?.remainingSeconds ?? totalSeconds;
   const [remaining, setRemaining] = useState(initialRemaining);
   const [showSubmit, setShowSubmit] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const submission = useRef<Parameters<Props['onSubmit']> | null>(null);
   const [showScratchpad, setShowScratchpad] = useState(false);
   const [scratchText, setScratchText] = useState('');
   const [tabSwitchCount, setTabSwitchCount] = useState(initialDraft?.tabSwitchCount ?? 0);
@@ -37,42 +40,27 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
   responsesRef.current = responses;
   const currentIndexRef = useRef(currentIndex);
   currentIndexRef.current = currentIndex;
-  const remainingRef = useRef(remaining);
-  remainingRef.current = remaining;
   const tabSwitchRef = useRef(tabSwitchCount);
   tabSwitchRef.current = tabSwitchCount;
 
-  // Fullscreen Kiosk Mode
   useEffect(() => {
-    const el = document.documentElement;
-    if (el.requestFullscreen) {
-      el.requestFullscreen().catch(() => undefined);
-    }
-    return () => {
-      if (document.fullscreenElement && document.exitFullscreen) {
-        document.exitFullscreen().catch(() => undefined);
-      }
-    };
-  }, []);
-
-  // Tab-switch / Blur warning
-  useEffect(() => {
-    const handleBlur = () => {
-      if (submitted.current) return;
-      setTabSwitchCount((c) => c + 1);
-      setFocusWarning(true);
-    };
-    const handleVisibility = () => {
-      if (document.hidden && !submitted.current) {
-        setTabSwitchCount((c) => c + 1);
+    let lostFocus = false;
+    const checkFocus = () => {
+      const unfocused = document.hidden || !document.hasFocus();
+      if (unfocused && !lostFocus && !submitted.current) {
+        tabSwitchRef.current += 1;
+        setTabSwitchCount(tabSwitchRef.current);
         setFocusWarning(true);
       }
+      lostFocus = unfocused;
     };
-    window.addEventListener('blur', handleBlur);
-    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', checkFocus);
+    window.addEventListener('focus', checkFocus);
+    document.addEventListener('visibilitychange', checkFocus);
     return () => {
-      window.removeEventListener('blur', handleBlur);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', checkFocus);
+      window.removeEventListener('focus', checkFocus);
+      document.removeEventListener('visibilitychange', checkFocus);
     };
   }, []);
 
@@ -84,18 +72,29 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
     return { ...base, [qId]: { ...prev, visited: true, timeSpentSec: prev.timeSpentSec + elapsed } };
   }, [paper.questions]);
 
+  const saveSubmission = useCallback(async () => {
+    if (!submission.current) return;
+    setSaving(true);
+    setSaveError(false);
+    try {
+      await onSubmit(...submission.current);
+      clearExamDraft(userId);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    } catch {
+      setSaveError(true);
+      setSaving(false);
+    }
+  }, [onSubmit, userId]);
+
   const submitExam = useCallback((byTimer: boolean) => {
     if (submitted.current) return;
     submitted.current = true;
     const finalized = withCurrentTime(responsesRef.current, currentIndexRef.current);
     const timeTaken = Math.min(totalSeconds, Math.max(1, totalSeconds - Math.round((deadline.current - Date.now()) / 1000)));
-    clearExamDraft(userId);
-    setScratchText('');
-    if (document.fullscreenElement && document.exitFullscreen) {
-      document.exitFullscreen().catch(() => undefined);
-    }
-    onSubmit(finalized, timeTaken, byTimer, tabSwitchRef.current);
-  }, [onSubmit, totalSeconds, userId, withCurrentTime]);
+    submission.current = [finalized, timeTaken, byTimer, tabSwitchRef.current];
+    setShowSubmit(false);
+    void saveSubmission();
+  }, [saveSubmission, totalSeconds, withCurrentTime]);
 
   // Countdown Timer
   useEffect(() => {
@@ -107,23 +106,42 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
     return () => clearInterval(timer);
   }, [submitExam]);
 
-  // Auto-Save Crash Recovery every 5 seconds
-  useEffect(() => {
-    const autosave = setInterval(() => {
-      if (submitted.current) return;
-      saveExamDraft({
-        userId,
-        paper,
-        config,
-        responses: responsesRef.current,
-        currentIndex: currentIndexRef.current,
-        remainingSeconds: remainingRef.current,
-        tabSwitchCount: tabSwitchRef.current,
-        lastSavedAt: new Date().toISOString(),
-      });
-    }, 5000);
-    return () => clearInterval(autosave);
+  const persistDraft = useCallback((snapshot: Record<string, QuestionResponse>, index: number) => {
+    if (submitted.current) return;
+    saveExamDraft({
+      userId, paper, config, responses: snapshot, currentIndex: index,
+      remainingSeconds: Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000)),
+      tabSwitchCount: tabSwitchRef.current,
+      lastSavedAt: new Date().toISOString(),
+    });
   }, [config, paper, userId]);
+
+  useEffect(() => {
+    const save = () => {
+      if (submitted.current) return;
+      const snapshot = withCurrentTime(responsesRef.current, currentIndexRef.current);
+      responsesRef.current = snapshot;
+      setResponses(snapshot);
+      persistDraft(snapshot, currentIndexRef.current);
+    };
+    const timer = setInterval(save, 5000);
+    const onPageHide = () => persistDraft(responsesRef.current, currentIndexRef.current);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [persistDraft, withCurrentTime]);
+
+  const setAnswer = useCallback((selectedIndex?: number) => {
+    const index = currentIndexRef.current;
+    const id = String(paper.questions[index].id);
+    const current = responsesRef.current;
+    const next = { ...current, [id]: { ...current[id], selectedIndex } };
+    responsesRef.current = next;
+    setResponses(next);
+    persistDraft(next, index);
+  }, [paper.questions, persistDraft]);
 
   const navigate = useCallback((target: number, changes?: Partial<QuestionResponse>) => {
     const nextIdx = Math.max(0, Math.min(paper.questions.length - 1, target));
@@ -134,35 +152,24 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
     }
     const targetId = String(paper.questions[nextIdx].id);
     updated[targetId] = { ...(updated[targetId] ?? { markedForReview: false, timeSpentSec: 0 }), visited: true };
+    responsesRef.current = updated;
+    currentIndexRef.current = nextIdx;
     setResponses(updated);
     setCurrentIndex(nextIdx);
-    saveExamDraft({
-      userId,
-      paper,
-      config,
-      responses: updated,
-      currentIndex: nextIdx,
-      remainingSeconds: remainingRef.current,
-      tabSwitchCount: tabSwitchRef.current,
-      lastSavedAt: new Date().toISOString(),
-    });
-  }, [config, paper, userId, withCurrentTime]);
-
-  const chooseOption = useCallback((selectedIndex: number) => {
-    const qId = String(paper.questions[currentIndexRef.current].id);
-    setResponses((prev) => {
-      const next = { ...prev, [qId]: { ...(prev[qId] ?? { visited: true, markedForReview: false, timeSpentSec: 0 }), visited: true, selectedIndex } };
-      return next;
-    });
-  }, [paper.questions]);
+    persistDraft(updated, nextIdx);
+  }, [paper.questions, persistDraft, withCurrentTime]);
 
   // Keyboard shortcuts (disabled in Strict Mouse-Only Mode)
   useEffect(() => {
-    if (config.mouseOnly || showSubmit) return;
     const onKey = (e: KeyboardEvent) => {
-      if (showScratchpad && document.activeElement?.tagName === 'TEXTAREA') return;
+      if (submitted.current || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (showSubmit) return;
+      if (config.mouseOnly) {
+        if (/^[1-5]$|^Arrow|^Enter$|^ $|^m$/i.test(e.key)) e.preventDefault();
+        return;
+      }
       if (['1', '2', '3', '4', '5'].includes(e.key)) {
-        chooseOption(Number(e.key) - 1);
+        setAnswer(Number(e.key) - 1);
       } else if (e.key === 'Enter') {
         if (currentIndexRef.current < paper.questions.length - 1) navigate(currentIndexRef.current + 1);
       } else if (e.key === 'm' || e.key === 'M') {
@@ -171,9 +178,9 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
         navigate(Math.min(paper.questions.length - 1, currentIndexRef.current + 1), { markedForReview: !cur });
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [chooseOption, config.mouseOnly, navigate, paper.questions, showScratchpad, showSubmit]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [setAnswer, config.mouseOnly, navigate, paper.questions, showSubmit]);
 
   const question = paper.questions[currentIndex];
   const resp = responses[String(question.id)];
@@ -264,7 +271,7 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
                   <button
                     key={idx}
                     type="button"
-                    onClick={() => chooseOption(idx)}
+                    onClick={() => setAnswer(idx)}
                     className={`flex w-full items-center justify-between rounded-xl border p-4 text-left transition ${selected ? 'border-blue-700 bg-blue-50 ring-2 ring-blue-200' : 'border-slate-200 hover:bg-slate-50'}`}
                   >
                     <div className="flex items-center gap-3">
@@ -292,7 +299,7 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
               </button>
               <button
                 type="button"
-                onClick={() => setResponses((p) => ({ ...p, [String(question.id)]: { ...(p[String(question.id)] ?? { visited: true, markedForReview: false, timeSpentSec: 0 }), selectedIndex: undefined } }))}
+                onClick={() => setAnswer()}
                 className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Eraser className="h-4 w-4" /> Clear response
@@ -346,19 +353,30 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
         </div>
       </div>
 
+      {(saving || saveError) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div role="dialog" aria-modal="true" aria-label="Save exam result" className="rounded-xl bg-white p-5">
+            {saving ? <p role="status">Saving your result…</p> : <>
+              <p role="alert">Your result could not be saved. Your answers are still here.</p>
+              <button autoFocus className="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-white" onClick={() => void saveSubmission()}>Retry saving</button>
+            </>}
+          </div>
+        </div>
+      )}
+
       {showSubmit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="text-xl font-bold text-slate-900">Confirm Exam Submission</h2>
+          <div role="dialog" aria-modal="true" aria-labelledby="submit-heading" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 id="submit-heading" className="text-xl font-bold text-slate-900">Confirm Exam Submission</h2>
             <p className="mt-1 text-sm text-slate-600">Review your attempt summary before final submission:</p>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-xl bg-emerald-50 p-3 font-semibold text-emerald-900">Answered: {summaryCounts.answered}</div>
-              <div className="rounded-xl bg-red-50 p-3 font-semibold text-red-900">Not Answered: {summaryCounts.notAnswered}</div>
+              <div className="rounded-xl bg-red-50 p-3 font-semibold text-red-900">Not Answered (Visited): {summaryCounts.notAnswered}</div>
               <div className="rounded-xl bg-violet-50 p-3 font-semibold text-violet-900">Marked for Review: {summaryCounts.marked}</div>
               <div className="rounded-xl bg-slate-100 p-3 font-semibold text-slate-800">Not Visited: {summaryCounts.notVisited}</div>
             </div>
             <div className="mt-6 flex gap-3">
-              <button onClick={() => setShowSubmit(false)} className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
+              <button autoFocus onClick={() => setShowSubmit(false)} className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
                 Return to Exam
               </button>
               <button onClick={() => submitExam(false)} className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">

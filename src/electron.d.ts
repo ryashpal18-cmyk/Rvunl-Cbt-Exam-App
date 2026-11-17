@@ -15,8 +15,8 @@ declare global {
       resetAttempts: (target: UserId | 'all', pin: string) => Promise<number>;
       addProfile: (name: string, pin: string) => Promise<ProfileRecord>;
       deleteProfile: (userId: UserId, pin: string) => Promise<number>;
-      exportBackup: (pin: string) => Promise<boolean>;
-      importBackup: (pin: string) => Promise<StoredState | null>;
+      exportBackup: (pin: string, extras: string[]) => Promise<boolean>;
+      importBackup: (pin: string) => Promise<{ state: StoredState; extras?: string[] } | null>;
       saveExportFile: (fileName: string, data: number[], kind: 'csv' | 'pdf', pin: string) => Promise<boolean>;
 
       getAppVersion: () => Promise<string>;

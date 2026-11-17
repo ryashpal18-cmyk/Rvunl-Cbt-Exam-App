@@ -1,51 +1,61 @@
-name: Build and Release RVUNL CBT Windows EXE
+name: Build RVUNL CBT Windows EXE
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'rvunl-v2-update']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build-windows:
     runs-on: windows-latest
-
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Assign sequential build version
+      - name: Verify release tag matches app version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          $package = Get-Content package.json | ConvertFrom-Json
-          $parts = $package.version.Split('.')
-          $version = "$($parts[0]).$($parts[1]).${{ github.run_number }}"
-          npm version $version --no-git-tag-version
-          "APP_VERSION=$version" >> $env:GITHUB_ENV
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Release tag must match package.json version v$version."
+          }
 
       - name: Build frontend and Electron app
         run: npm run build
 
+      - name: Package Windows executables
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        run: npx electron-builder --win --x64 --publish never
+
       - name: Package and publish Windows release
-        run: npx electron-builder --win --x64 --publish always
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish always -c.publish.releaseType=release
+
+      - name: Verify installer and portable executables
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem release -Filter '*.exe' -File)
+          if ($files.Count -lt 2) { throw 'Expected NSIS and portable executables.' }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: RVUNL-CBT-Mock-App-Windows-v${{ env.APP_VERSION }}
+          name: RVUNL-CBT-Mock-App-Windows
           path: |
             release/*.exe
             release/*.yml
