@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Award,
@@ -19,14 +19,12 @@ import {
   Sun,
   TrendingUp,
   Upload,
-  Users,
 } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   Attempt,
   DraftExamState,
   Paper,
-  ProfileRecord,
   Question,
   SUBJECTS,
   Subject,
@@ -43,8 +41,6 @@ import {
   toggleBookmark,
 } from '../services/userExtras';
 import AdminPanel from './AdminPanel';
-import ComparisonView from './ComparisonView';
-import Importer from './Importer';
 import MistakeBank from './MistakeBank';
 import TypingPractice from './TypingPractice';
 import UpdateManager from './UpdateManager';
@@ -52,7 +48,6 @@ import UpdateManager from './UpdateManager';
 interface Props {
   userId: UserId;
   userName: string;
-  profiles: ProfileRecord[];
   attempts: Attempt[];
   papers: Paper[];
   theme: ThemeMode;
@@ -62,19 +57,11 @@ interface Props {
   onResumeDraft: (draft: DraftExamState) => void;
   onOpenAttempt: (attempt: Attempt) => void;
   onLogout: () => void;
-  onVerifyAdminPin: (pin: string) => Promise<boolean>;
-  onChangeAdminPin: (oldPin: string, newPin: string) => Promise<boolean>;
-  onImportPapers: (papers: Paper[]) => Promise<void>;
-  onDeletePapers: (paperIds: string[]) => Promise<void>;
-  onResetResults: (targetUserId?: string) => Promise<void>;
-  onAddProfile: (name: string, pin: string) => Promise<ProfileRecord>;
-  onDeleteProfile: (id: string) => Promise<void>;
-  onExportBackup: () => Promise<string>;
-  onImportBackup: (json: string) => Promise<void>;
+  admin: React.ComponentProps<typeof AdminPanel>;
   onSaveExport: (data: Uint8Array, defaultName: string) => Promise<void>;
 }
 
-type Tab = 'papers' | 'history' | 'bookmarks' | 'typing' | 'mistakes' | 'compare' | 'settings';
+type Tab = 'papers' | 'history' | 'bookmarks' | 'typing' | 'mistakes' | 'settings';
 
 const SURPRISE_QUOTA: Record<Subject, { count: number; marks: number }> = {
   'Rajasthan GK': { count: 23, marks: 2 },
@@ -87,14 +74,15 @@ const SURPRISE_QUOTA: Record<Subject, { count: number; marks: number }> = {
 
 function computeDailyStreak(userAttempts: Attempt[]): number {
   if (userAttempts.length === 0) return 0;
-  const daySet = new Set(userAttempts.map((a) => new Date(a.timestamp).toISOString().slice(0, 10)));
+  const localDay = (date: Date) => date.toLocaleDateString();
+  const daySet = new Set(userAttempts.map((a) => localDay(new Date(a.timestamp))));
   let streak = 0;
   const cursor = new Date();
-  const todayStr = cursor.toISOString().slice(0, 10);
+  const todayStr = localDay(cursor);
   if (!daySet.has(todayStr)) {
     cursor.setDate(cursor.getDate() - 1);
   }
-  while (daySet.has(cursor.toISOString().slice(0, 10))) {
+  while (daySet.has(localDay(cursor))) {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
@@ -104,7 +92,6 @@ function computeDailyStreak(userAttempts: Attempt[]): number {
 export default function Dashboard({
   userId,
   userName,
-  profiles,
   attempts,
   papers,
   theme,
@@ -114,15 +101,7 @@ export default function Dashboard({
   onResumeDraft,
   onOpenAttempt,
   onLogout,
-  onVerifyAdminPin,
-  onChangeAdminPin,
-  onImportPapers,
-  onDeletePapers,
-  onResetResults,
-  onAddProfile,
-  onDeleteProfile,
-  onExportBackup,
-  onImportBackup,
+  admin,
   onSaveExport,
 }: Props) {
   const [tab, setTab] = useState<Tab>('papers');
@@ -131,6 +110,8 @@ export default function Dashboard({
   const [miniSubject, setMiniSubject] = useState<Subject>('Rajasthan GK');
   const [extrasMsg, setExtrasMsg] = useState<string | null>(null);
   const extrasInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setBookmarks(getBookmarks(userId)), [tab, userId]);
 
   const userAttempts = useMemo(
     () => attempts.filter((a) => a.userId === userId).sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
@@ -155,7 +136,7 @@ export default function Dashboard({
       .slice(-15)
       .map((a, idx) => ({
         label: `#${idx + 1}`,
-        score: a.totalScore,
+        score: a.maxScore ? Math.round(a.totalScore / a.maxScore * 10000) / 100 : 0,
         title: a.paperTitle,
       }));
   }, [userAttempts]);
@@ -173,7 +154,7 @@ export default function Dashboard({
       for (const sr of res.subjects) {
         const cur = totals.get(sr.subject)!;
         cur.correct += sr.correct;
-        cur.total += sr.total;
+        cur.total += sr.attempted;
       }
     }
 
@@ -201,7 +182,11 @@ export default function Dashboard({
     return pool;
   }, [papers]);
 
+  const canGenerateSurprise = SUBJECTS.every((subject) =>
+    (questionPoolBySubject.get(subject)?.length ?? 0) >= SURPRISE_QUOTA[subject].count);
+
   const launchSurpriseMix = () => {
+    if (!canGenerateSurprise) return;
     const selected: Question[] = [];
     let nextId = 1;
     for (const subject of SUBJECTS) {
@@ -236,7 +221,7 @@ export default function Dashboard({
     }
     const picked = available.slice(0, quota.count).map((q, idx) => ({ ...q, id: idx + 1, marks: quota.marks }));
     if (picked.length === 0) return;
-    const durationMinutes = Math.max(10, Math.round(picked.length * 1.1));
+    const durationMinutes = subject === 'Rajasthan GK' ? 20 : subject === 'Mathematics' ? 12 : 10;
     const miniPaper: Paper = {
       paperId: `mini_${subject.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}`,
       title: `${subject} Mini Test (${picked.length} Qs)`,
@@ -272,7 +257,6 @@ export default function Dashboard({
     { id: 'bookmarks', label: `Bookmarks (${bookmarks.length})`, icon: Bookmark },
     { id: 'typing', label: 'Typing (Phase-II)', icon: Keyboard },
     { id: 'mistakes', label: 'Mistake Bank', icon: Award },
-    { id: 'compare', label: 'Compare', icon: Users },
     { id: 'settings', label: 'Settings & Backup', icon: Settings },
   ];
 
@@ -385,6 +369,8 @@ export default function Dashboard({
                   <button
                     type="button"
                     onClick={launchSurpriseMix}
+                    disabled={!canGenerateSurprise}
+                    title={canGenerateSurprise ? undefined : 'Import more unique questions for each subject.'}
                     className="shrink-0 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800"
                   >
                     Generate Surprise Mock
@@ -438,11 +424,6 @@ export default function Dashboard({
                 </div>
               </div>
             )}
-
-            <Importer
-              onImport={onImportPapers}
-              onDownloadTemplate={(data) => onSaveExport(data, 'rvunl_paper_template.csv')}
-            />
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {papers.map((paper) => {
@@ -575,9 +556,7 @@ export default function Dashboard({
 
         {tab === 'typing' && <TypingPractice userId={userId} userName={userName} />}
 
-        {tab === 'mistakes' && <MistakeBank attempts={userAttempts} papers={papers} />}
-
-        {tab === 'compare' && <ComparisonView profiles={profiles} attempts={attempts} papers={papers} />}
+        {tab === 'mistakes' && <MistakeBank userId={userId} attempts={userAttempts} papers={papers} onPractice={onStartVirtualPaper} />}
 
         {tab === 'settings' && (
           <div className="space-y-6">
@@ -612,18 +591,7 @@ export default function Dashboard({
               </div>
               {extrasMsg && <p className="mt-2 text-xs font-semibold text-emerald-700">{extrasMsg}</p>}
             </div>
-            <AdminPanel
-              profiles={profiles}
-              papers={papers}
-              onVerifyPin={onVerifyAdminPin}
-              onChangePin={onChangeAdminPin}
-              onDeletePapers={onDeletePapers}
-              onResetResults={onResetResults}
-              onAddProfile={onAddProfile}
-              onDeleteProfile={onDeleteProfile}
-              onExportBackup={onExportBackup}
-              onImportBackup={onImportBackup}
-            />
+            <AdminPanel {...admin} />
           </div>
         )}
       </main>

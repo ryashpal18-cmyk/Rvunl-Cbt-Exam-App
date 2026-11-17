@@ -12,13 +12,27 @@ function sendUpdateStatus(status: Record<string, unknown>): void {
 
 function configureAutoUpdater(): void {
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on('checking-for-update', () => sendUpdateStatus({ state: 'checking', message: 'Checking for a new version…' }));
   autoUpdater.on('update-available', (info) => sendUpdateStatus({ state: 'available', message: `Version ${info.version} is available.`, version: info.version }));
   autoUpdater.on('update-not-available', (info) => sendUpdateStatus({ state: 'not-available', message: 'You already have the latest version.', version: info.version }));
   autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ state: 'downloading', message: `Downloading update… ${Math.round(progress.percent)}%`, percent: progress.percent }));
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'downloaded', message: `Version ${info.version} is ready to install.`, version: info.version }));
   autoUpdater.on('error', (error) => sendUpdateStatus({ state: 'error', message: error.message || 'Update check failed.' }));
+}
+
+function validateBackupExtras(value: unknown): asserts value is string[] {
+  if (!Array.isArray(value)) throw new Error('Invalid profile extras in backup.');
+  const ids = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'string') throw new Error('Invalid profile extras in backup.');
+    const extra = JSON.parse(raw);
+    if (typeof extra?.userId !== 'string' || ids.has(extra.userId) ||
+        !Array.isArray(extra.bookmarks) || !Array.isArray(extra.typingAttempts)) {
+      throw new Error('Invalid or duplicate profile extras in backup.');
+    }
+    ids.add(extra.userId);
+  }
 }
 
 function createWindow(): void {
@@ -61,11 +75,12 @@ app.whenReady().then(() => {
   ipcMain.handle('admin:attempts-reset', (_event, target, pin) => resetAttempts(target, pin));
   ipcMain.handle('admin:profile-add', (_event, name, pin) => addProfile(name, pin));
   ipcMain.handle('admin:profile-delete', (_event, userId, pin) => deleteProfile(userId, pin));
-  ipcMain.handle('admin:backup-export', async (_event, pin) => {
+  ipcMain.handle('admin:backup-export', async (_event, pin, extras: string[]) => {
     const backup = createBackup(pin);
+    validateBackupExtras(extras);
     const result = await dialog.showSaveDialog(mainWindow!, { title: 'Save RVUNL CBT backup', defaultPath: `rvunl-cbt-backup-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'RVUNL Backup', extensions: ['json'] }] });
     if (result.canceled || !result.filePath) return false;
-    writeFileSync(result.filePath, JSON.stringify(backup, null, 2), 'utf8');
+    writeFileSync(result.filePath, JSON.stringify({ ...backup, extras }, null, 2), 'utf8');
     return true;
   });
   ipcMain.handle('admin:backup-import', async (_event, pin) => {
@@ -73,8 +88,10 @@ app.whenReady().then(() => {
     const result = await dialog.showOpenDialog(mainWindow!, { title: 'Restore RVUNL CBT backup', properties: ['openFile'], filters: [{ name: 'RVUNL Backup', extensions: ['json'] }] });
     if (result.canceled || !result.filePaths[0]) return null;
     const value = JSON.parse(readFileSync(result.filePaths[0], 'utf8')) as unknown;
+    const extras = (value as { extras?: unknown } | null)?.extras;
+    if (extras !== undefined) validateBackupExtras(extras);
     restoreBackup(value, pin);
-    return publicState();
+    return { state: publicState(), extras };
   });
   ipcMain.handle('admin:file-save', async (_event, fileName, data, kind, pin) => {
     if (!verifyAdminPin(pin)) throw new Error('Incorrect admin PIN.');
@@ -88,7 +105,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('app:get-version', () => app.getVersion());
   ipcMain.handle('update:check', async () => {
-    if (!app.isPackaged) {
+    if (!app.isPackaged || process.platform !== 'win32' || process.env.PORTABLE_EXECUTABLE_FILE) {
       sendUpdateStatus({ state: 'not-available', message: 'Update checks are available in the installed Windows app.', version: app.getVersion() });
       return;
     }
@@ -98,7 +115,6 @@ app.whenReady().then(() => {
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(false, true));
 
   createWindow();
-  if (app.isPackaged) setTimeout(() => void autoUpdater.checkForUpdates().catch(() => undefined), 8000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

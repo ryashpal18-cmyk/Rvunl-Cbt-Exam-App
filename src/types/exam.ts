@@ -134,6 +134,7 @@ export interface TypingAttempt {
   id: string;
   userId: UserId;
   language: 'en' | 'hi';
+  keyboardLayout?: 'kruti-dev';
   durationMinutes: number;
   grossWpm: number;
   netWpm: number;

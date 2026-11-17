@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('rvunlAPI', {
   resetAttempts: (target: string, pin: string) => ipcRenderer.invoke('admin:attempts-reset', target, pin),
   addProfile: (name: string, pin: string) => ipcRenderer.invoke('admin:profile-add', name, pin),
   deleteProfile: (userId: string, pin: string) => ipcRenderer.invoke('admin:profile-delete', userId, pin),
-  exportBackup: (pin: string) => ipcRenderer.invoke('admin:backup-export', pin),
+  exportBackup: (pin: string, extras: string[]) => ipcRenderer.invoke('admin:backup-export', pin, extras),
   importBackup: (pin: string) => ipcRenderer.invoke('admin:backup-import', pin),
   saveExportFile: (fileName: string, data: number[], kind: 'csv' | 'pdf', pin: string) => ipcRenderer.invoke('admin:file-save', fileName, data, kind, pin),
 

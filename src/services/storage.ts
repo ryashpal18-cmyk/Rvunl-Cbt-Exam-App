@@ -1,3 +1,4 @@
+import { clearExamDraft, exportUserExtrasJson, importUserExtrasJson } from './userExtras';
 import { Attempt, Paper, ProfileRecord, StoredState, UserId } from '../types/exam';
 
 const STORAGE_KEY = 'rvunl-cbt-browser-data';
@@ -114,7 +115,10 @@ export async function removeProfile(userId: UserId, adminPin: string): Promise<n
 }
 
 export async function exportBackup(adminPin: string): Promise<boolean> {
-  if (window.rvunlAPI) return window.rvunlAPI.exportBackup(adminPin);
+  if (window.rvunlAPI) {
+    const { profiles } = await window.rvunlAPI.loadState();
+    return window.rvunlAPI.exportBackup(adminPin, profiles.map(({ id }) => exportUserExtrasJson(id)));
+  }
   if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
   const data = new TextEncoder().encode(JSON.stringify({ format: 'rvunl-cbt-backup', version: 1, exportedAt: new Date().toISOString(), ...browserLoad(), pins: {} }, null, 2));
   downloadBrowserFile(`rvunl-cbt-backup-${new Date().toISOString().slice(0, 10)}.json`, data, 'application/json');
@@ -122,7 +126,19 @@ export async function exportBackup(adminPin: string): Promise<boolean> {
 }
 
 export async function importBackup(adminPin: string): Promise<StoredState | null> {
-  if (window.rvunlAPI) return window.rvunlAPI.importBackup(adminPin);
+  if (window.rvunlAPI) {
+    const before = await window.rvunlAPI.loadState();
+    const restored = await window.rvunlAPI.importBackup(adminPin);
+    if (!restored) return null;
+    for (const { id } of [...before.profiles, ...restored.state.profiles]) clearExamDraft(id);
+    if (restored.extras) {
+      const byUser = new Map(restored.extras.map((raw) => [JSON.parse(raw).userId, raw]));
+      for (const { id } of restored.state.profiles) {
+        importUserExtrasJson(id, byUser.get(id) ?? JSON.stringify({ userId: id, theme: 'light', bookmarks: [], typingAttempts: [] }));
+      }
+    }
+    return restored.state;
+  }
   throw new Error('Backup restore is available in the installed Windows app.');
 }
 
@@ -138,11 +154,23 @@ export async function updatePin(userId: UserId, pin: string | null): Promise<voi
   const state = browserLoad();
   const key = `rvunl-pin-${userId}`;
   if (pin === null) localStorage.removeItem(key);
-  else localStorage.setItem(key, pin);
+  else localStorage.setItem(key, await pinHash(pin));
   browserSave({ ...state, profiles: state.profiles.map((profile) => profile.id === userId ? { ...profile, pinConfigured: pin !== null } : profile) });
 }
 
 export async function checkPin(userId: UserId, pin: string): Promise<boolean> {
   if (window.rvunlAPI) return window.rvunlAPI.verifyPin(userId, pin);
-  return localStorage.getItem(`rvunl-pin-${userId}`) === pin;
+  const key = `rvunl-pin-${userId}`;
+  const stored = localStorage.getItem(key);
+  if (!stored || !/^\d{4}$/.test(pin)) return false;
+  const hash = await pinHash(pin);
+  if (stored === hash) return true;
+  if (stored !== pin) return false;
+  localStorage.setItem(key, hash);
+  return true;
+}
+
+
+export async function saveProfileExport(data: Uint8Array, fileName: string): Promise<void> {
+  downloadBrowserFile(fileName, data, 'application/json');
 }

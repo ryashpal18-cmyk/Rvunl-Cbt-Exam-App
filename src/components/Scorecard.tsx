@@ -19,6 +19,10 @@ const CUTOFFS = [
 
 export default function Scorecard({ attempt, paper, onReview, onDashboard }: Props) {
   const result = resultForAttempt(attempt, paper);
+  const wrongQuestions = paper.questions.filter((question) => {
+    const choice = attempt.responses[String(question.id)]?.selectedIndex;
+    return choice !== undefined && choice !== question.correctIndex;
+  });
   const inSafeZone = result.percentage >= 75;
 
   return (
@@ -47,7 +51,7 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
                 <ShieldCheck className={`h-4 w-4 ${inSafeZone ? 'text-emerald-600' : 'text-amber-600'}`} />
-                Expected Cutoff Indicator ({inSafeZone ? 'Safe Zone' : 'Needs Improvement'})
+                Practice Cutoff Reference ({inSafeZone ? 'Safe Zone' : 'Needs Improvement'})
               </span>
               <span className="text-xs font-semibold text-slate-600">Your Score: {result.percentage}%</span>
             </div>
@@ -56,6 +60,9 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
                 className={`h-full transition-all ${inSafeZone ? 'bg-emerald-600' : result.percentage >= 62 ? 'bg-amber-500' : 'bg-red-500'}`}
                 style={{ width: `${Math.min(100, Math.max(0, result.percentage))}%` }}
               />
+              {CUTOFFS.map((marker) => (
+                <span key={marker.label} className="absolute inset-y-0 w-px bg-slate-900" style={{ left: `${marker.value}%` }} title={`${marker.label} ${marker.value}%`} />
+              ))}
             </div>
             <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] font-semibold text-slate-600">
               {CUTOFFS.map((c) => (
@@ -95,7 +102,7 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
                   <tr key={row.subject} className={`border-b border-slate-100 ${row.subject === 'Rajasthan GK' ? 'bg-amber-50/60 font-semibold' : ''}`}>
                     <td className="p-3">
                       {row.subject}
-                      {row.subject === 'Rajasthan GK' && (
+                      {row.subject === 'Rajasthan GK' && row.maxScore === 46 && (
                         <span className="ml-2 rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-900">46 MARKS</span>
                       )}
                     </td>
@@ -110,6 +117,24 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
               </tbody>
             </table>
           </div>
+
+          <section className="hidden print:block print:mt-8">
+            <h2 className="text-lg font-bold">Incorrect Answers Review</h2>
+            {!wrongQuestions.length && <p>No incorrect answers.</p>}
+            {wrongQuestions.map((question) => {
+              const choice = attempt.responses[String(question.id)].selectedIndex!;
+              return (
+                <article key={question.id} className="break-inside-avoid border-b py-3 text-sm">
+                  <h3 className="font-semibold">{question.question_en}</h3>
+                  <p lang="hi">{question.question_hi}</p>
+                  <p>Your answer: {question.options_en[choice]} / {question.options_hi[choice]}</p>
+                  <p>Correct answer: {question.options_en[question.correctIndex]} / {question.options_hi[question.correctIndex]}</p>
+                  <p>{question.explanation_en}</p>
+                  <p lang="hi">{question.explanation_hi}</p>
+                </article>
+              );
+            })}
+          </section>
 
           <div className="no-print mt-8 flex flex-wrap items-center justify-between gap-3">
             <button onClick={onDashboard} className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
