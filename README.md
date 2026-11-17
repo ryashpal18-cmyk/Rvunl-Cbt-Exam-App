@@ -92,3 +92,12 @@ Choose English, Hindi Unicode/Mangal, or Hindi Kruti Dev and a 5-, 10-, or 15-mi
 ## Privacy and exam integrity
 
 The live exam UI never reveals correctness, correct answers, or explanations. Those details appear only after submission. Local PINs are salted and hashed in the packaged desktop app; they are intended for profile separation on a shared computer, not high-security authentication.
+
+
+## Topic practice and exam controls
+
+Open **Practice** to combine topics, choose question counts and difficulty, and save the setup as a preset. Search in Hindi or English to select individual questions for a timed test. Topic availability counts use unique questions. The syllabus checklist and practice goals are stored per profile on this device. Goal progress counts completed attempts after the goal is set.
+
+Papers can supply optional question-level metadata. JSON questions accept `topic`, `difficulty` (Easy, Medium, Hard), `source` (with `title` and optional `year`), and `optionExplanations_en` / `optionExplanations_hi` arrays in A–E order. In CSV/XLSX, use `topic`, `difficulty`, `source`, `year`, and columns like `explanation_a_hi`. Existing papers use text-based topic matching and paper-level difficulty when question metadata is absent. The importer reports repeated questions and preserves the original paper.
+
+The optional **Save & Next** mode saves a selection when you use Save & Next, Save answer on the last question, or Mark for Review & Next. Opening another question directly discards an unsaved selection. The full-paper view and final submission checklist show only exam content and response status. Option explanations and the result of guessed answers appear in post-exam review.
