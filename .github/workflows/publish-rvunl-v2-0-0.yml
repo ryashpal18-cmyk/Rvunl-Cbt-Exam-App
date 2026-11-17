@@ -1,4 +1,4 @@
-name: Start RVUNL v2.0.0 release
+name: Retry RVUNL v2.0.0 release
 on:
   push:
     branches: [publish-rvunl-v2-0-0]
@@ -10,16 +10,16 @@ jobs:
   tag-and-dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Tag verified main commit and run Windows release workflow
+      - name: Update the unpublished tag and dispatch Windows packaging
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TARGET: '7c5a1620f14516005f160776a1bfe3266aa3fbe2'
+          OLD: '7c5a1620f14516005f160776a1bfe3266aa3fbe2'
+          TARGET: '4c541f0bc5f4f750104d0db91375a95eca21ed0f'
         run: |
           set -euo pipefail
-          actual=$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)
-          test "$actual" = "$TARGET"
-          version=$(gh api "repos/$REPO/contents/package.json?ref=$TARGET" --jq .content | base64 -d | jq -r .version)
-          test "$version" = '2.0.0'
-          gh api --method POST "repos/$REPO/git/refs" -f ref="refs/tags/v$version" -f sha="$TARGET"
-          gh workflow run build-windows.yml --repo "$REPO" --ref "v$version"
+          test "$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" = "$TARGET"
+          test "$(gh api "repos/$REPO/git/ref/tags/v2.0.0" --jq .object.sha)" = "$OLD"
+          test -z "$(gh api --paginate "repos/$REPO/releases" --jq '.[] | select(.tag_name == "v2.0.0") | .id')"
+          gh api --method PATCH "repos/$REPO/git/refs/tags/v2.0.0" -f sha="$TARGET" -F force=true
+          gh workflow run build-windows.yml --repo "$REPO" --ref v2.0.0
