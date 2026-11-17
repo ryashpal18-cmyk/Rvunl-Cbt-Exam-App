@@ -25,7 +25,11 @@
       { target: "portable", arch: ["x64"] }
     ]
   },
+  portable: {
+    artifactName: "RVUNL-CBT-Mock-Exam-${version}.${ext}"
+  },
   nsis: {
+    artifactName: "RVUNL-CBT-Mock-Exam-Setup-${version}.${ext}",
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
