@@ -1,8 +1,10 @@
+import { AppLanguage } from './uiLanguage';
 import { useEffect, useState } from 'react';
 import {
   Attempt,
   DraftExamState,
   ExamConfig,
+  Language,
   Paper,
   Question,
   QuestionResponse,
@@ -12,7 +14,7 @@ import {
 } from './types/exam';
 import { loadBuiltInPapers } from './data/builtInPapers';
 import * as storage from './services/storage';
-import { getUserTheme, setUserTheme } from './services/userExtras';
+import { getUserTheme, loadExamDraft, setUserTheme } from './services/userExtras';
 import { calculateScore } from './utils/scoring';
 import Dashboard from './components/Dashboard';
 import ExamScreen from './components/ExamScreen';
@@ -43,7 +45,7 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 function buildSessionPaper(base: Paper, config: ExamConfig): Paper {
-  let questions: Question[] = base.questions.map((q) => ({ ...q }));
+  let questions: Question[] = base.questions.map((q) => ({ ...q, source: q.source ?? { title: base.title, year: base.year } }));
   if (config.shuffleQuestions) {
     questions = shuffleArray(questions);
   }
@@ -55,7 +57,11 @@ function buildSessionPaper(base: Paper, config: ExamConfig): Paper {
       const options_en = order.map((idx) => q.options_en[idx]) as [string, string, string, string, string];
       const options_hi = order.map((idx) => q.options_hi[idx]) as [string, string, string, string, string];
       const correctIndex = order.indexOf(q.correctIndex);
-      return { ...q, options_en, options_hi, correctIndex };
+      return {
+        ...q, options_en, options_hi, correctIndex,
+        optionExplanations_en: q.optionExplanations_en && order.map((idx) => q.optionExplanations_en![idx]),
+        optionExplanations_hi: q.optionExplanations_hi && order.map((idx) => q.optionExplanations_hi![idx]),
+      };
     });
   }
   return { ...base, questions };
@@ -66,6 +72,7 @@ function enterFullscreen(): void {
 }
 
 export default function App() {
+  const [uiLanguage, setUiLanguage] = useState<Language>(() => localStorage.getItem('rvunl-ui-language') === 'hi' ? 'hi' : 'en');
   const [state, setState] = useState<StoredState | null>(null);
   const [userId, setUserId] = useState<UserId | null>(null);
   const [theme, setTheme] = useState<ThemeMode>('light');
@@ -95,6 +102,20 @@ export default function App() {
     if (userId) setUserTheme(userId, next);
   };
 
+  useEffect(() => {
+    document.documentElement.lang = uiLanguage;
+    localStorage.setItem('rvunl-ui-language', uiLanguage);
+  }, [uiLanguage]);
+
+  const openDashboard = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    setScreen({ name: 'dashboard' });
+  };
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [screen.name]);
+
   const themeClass = theme === 'dark' ? 'theme-dark' : theme === 'warm' ? 'theme-warm' : '';
 
   if (!state) {
@@ -106,7 +127,19 @@ export default function App() {
   }
 
   return (
+    <AppLanguage.Provider value={uiLanguage}>
     <div className={`min-h-screen ${themeClass}`}>
+      {(screen.name === 'dashboard' || screen.name === 'profile') && (
+        <div className="flex justify-end border-b border-slate-200 bg-white px-6 py-2">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            {uiLanguage === 'hi' ? 'ऐप की भाषा' : 'App language'}
+            <select className="rounded border border-slate-300 bg-white px-2 py-1" value={uiLanguage} onChange={(event) => setUiLanguage(event.target.value as Language)}>
+              <option value="en">English</option>
+              <option value="hi">हिंदी</option>
+            </select>
+          </label>
+        </div>
+      )}
       {screen.name === 'profile' || !userId || !currentProfile ? (
         <ProfileSelector
           profiles={state.profiles}
@@ -134,10 +167,10 @@ export default function App() {
           onThemeChange={handleThemeChange}
           onStart={(paperId) => {
             const paper = state.papers.find((p) => p.paperId === paperId);
-            if (paper) setScreen({ name: 'instructions', paper });
+            if (paper && !loadExamDraft(userId)) setScreen({ name: 'instructions', paper });
           }}
-          onStartVirtualPaper={(paper) => setScreen({ name: 'instructions', paper })}
-          onResumeDraft={(draft) => { enterFullscreen(); setScreen({ name: 'exam', attemptId: crypto.randomUUID(), paper: draft.paper, config: draft.config, draft }); }}
+          onStartVirtualPaper={(paper) => { if (!loadExamDraft(userId)) setScreen({ name: 'instructions', paper }); }}
+          onResumeDraft={(draft) => { enterFullscreen(); setScreen({ name: 'exam', attemptId: draft.attemptId ?? crypto.randomUUID(), paper: draft.paper, config: draft.config, draft }); }}
           onOpenAttempt={(attempt) => {
             const paper = attempt.sessionPaper ?? state.papers.find((p) => p.paperId === attempt.paperId);
             if (paper) setScreen({ name: 'scorecard', attempt, paper });
@@ -149,6 +182,7 @@ export default function App() {
           }}
           admin={{
             attempts: state.attempts,
+            catalog: state.papers,
             papers: state.papers.filter((paper) => !builtInPapers.some((builtIn) => builtIn.paperId === paper.paperId)),
             profiles: state.profiles,
             onVerifyPin: storage.checkAdminPin,
@@ -212,6 +246,8 @@ export default function App() {
           paper={screen.paper}
           config={screen.config}
           initialDraft={screen.draft}
+          attemptId={screen.attemptId}
+          onDashboard={openDashboard}
           onSubmit={async (responses: Record<string, QuestionResponse>, timeTakenSeconds, submittedByTimer, tabSwitchCount) => {
             const summary = calculateScore(screen.paper, responses, screen.config.negativeMarking);
             const attempt: Attempt = {
@@ -244,7 +280,7 @@ export default function App() {
           attempt={screen.attempt}
           paper={screen.paper}
           onReview={() => setScreen({ name: 'review', attempt: screen.attempt, paper: screen.paper })}
-          onDashboard={() => setScreen({ name: 'dashboard' })}
+          onDashboard={openDashboard}
         />
       )}
 
@@ -254,8 +290,10 @@ export default function App() {
           attempt={screen.attempt}
           paper={screen.paper}
           onBack={() => setScreen({ name: 'scorecard', attempt: screen.attempt, paper: screen.paper })}
+          onDashboard={openDashboard}
         />
       )}
     </div>
+    </AppLanguage.Provider>
   );
 }

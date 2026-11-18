@@ -29,6 +29,11 @@ export interface Question {
   correctIndex: number;
   explanation_en: string;
   explanation_hi: string;
+  topic?: string;
+  difficulty?: Difficulty;
+  source?: { title: string; year?: number };
+  optionExplanations_en?: string[];
+  optionExplanations_hi?: string[];
 }
 
 export interface Paper {
@@ -45,6 +50,7 @@ export interface Paper {
 
 export interface QuestionResponse {
   selectedIndex?: number;
+  guessed?: boolean;
   markedForReview: boolean;
   visited: boolean;
   timeSpentSec: number;
@@ -93,6 +99,7 @@ export interface ExamConfig {
   negativeMarking: NegativeMarking;
   strictOmnibus: boolean;
   mouseOnly?: boolean;
+  saveAndNext?: boolean;
   shuffleQuestions?: boolean;
   shuffleOptions?: boolean;
 }
@@ -145,11 +152,13 @@ export interface TypingAttempt {
 }
 
 export interface DraftExamState {
+  attemptId?: string;
   userId: UserId;
   paper: Paper;
   config: ExamConfig;
   responses: Record<string, QuestionResponse>;
   currentIndex: number;
+  pendingResponse?: Pick<QuestionResponse, 'selectedIndex' | 'guessed'>;
   remainingSeconds: number;
   tabSwitchCount: number;
   lastSavedAt: string;

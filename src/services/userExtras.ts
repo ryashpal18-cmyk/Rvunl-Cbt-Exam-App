@@ -61,7 +61,7 @@ export function loadExamDraft(userId: UserId): DraftExamState | null {
     const raw = localStorage.getItem(KEY('draft', userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DraftExamState;
-    if (parsed?.userId !== userId || !parsed.paper?.questions?.length || parsed.remainingSeconds <= 0) return null;
+    if (parsed?.userId !== userId || !parsed.paper?.questions?.length || !Number.isFinite(parsed.remainingSeconds) || parsed.remainingSeconds < 0) return null;
     return parsed;
   } catch {
     return null;

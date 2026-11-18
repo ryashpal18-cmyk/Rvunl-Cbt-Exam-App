@@ -1,3 +1,7 @@
+import { subjectPracticePapers } from '../data/subjectPractice';
+import { bankQuestions, shuffled } from '../utils/questionBank';
+import PracticeLab from './PracticeLab';
+import { useSubjectLabel, useTranslation } from '../uiLanguage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -31,7 +35,7 @@ import {
   ThemeMode,
   UserId,
 } from '../types/exam';
-import { formatDuration, resultForAttempt } from '../utils/scoring';
+import { dailyScore, formatDuration, localDateKey, resultForAttempt } from '../utils/scoring';
 import {
   clearExamDraft,
   exportUserExtrasJson,
@@ -61,7 +65,7 @@ interface Props {
   onSaveExport: (data: Uint8Array, defaultName: string) => Promise<void>;
 }
 
-type Tab = 'papers' | 'history' | 'bookmarks' | 'typing' | 'mistakes' | 'settings';
+type Tab = 'practice' | 'papers' | 'history' | 'bookmarks' | 'typing' | 'mistakes' | 'settings';
 
 const SURPRISE_QUOTA: Record<Subject, { count: number; marks: number }> = {
   'Rajasthan GK': { count: 23, marks: 2 },
@@ -104,6 +108,9 @@ export default function Dashboard({
   admin,
   onSaveExport,
 }: Props) {
+  const t = useTranslation();
+  const subjectLabel = useSubjectLabel();
+  const [historyDay, setHistoryDay] = useState(() => localDateKey(new Date()));
   const [tab, setTab] = useState<Tab>('papers');
   const [draft, setDraft] = useState<DraftExamState | null>(() => loadExamDraft(userId));
   const [bookmarks, setBookmarks] = useState(() => getBookmarks(userId));
@@ -118,6 +125,9 @@ export default function Dashboard({
     [attempts, userId]
   );
 
+  const today = localDateKey(new Date());
+  const totalToday = dailyScore(userAttempts, today);
+  const selectedDayTotal = historyDay === today ? totalToday : dailyScore(userAttempts, historyDay);
   const paperMap = useMemo(() => new Map(papers.map((p) => [p.paperId, p])), [papers]);
 
   const latestByPaper = useMemo(() => {
@@ -170,17 +180,12 @@ export default function Dashboard({
   const questionPoolBySubject = useMemo(() => {
     const pool = new Map<Subject, Question[]>();
     for (const s of SUBJECTS) pool.set(s, []);
-    const seenText = new Set<string>();
-    for (const p of papers) {
-      for (const q of p.questions) {
-        const key = `${q.subject}::${q.question_en.trim()}`;
-        if (seenText.has(key)) continue;
-        seenText.add(key);
-        pool.get(q.subject)?.push(q);
-      }
-    }
+    for (const question of bankQuestions(papers)) pool.get(question.subject)?.push(question);
     return pool;
   }, [papers]);
+
+  const practicePapers = useMemo(() => [...papers, ...subjectPracticePapers], [papers]);
+  const subjectPracticePool = useMemo(() => bankQuestions(practicePapers), [practicePapers]);
 
   const canGenerateSurprise = SUBJECTS.every((subject) =>
     (questionPoolBySubject.get(subject)?.length ?? 0) >= SURPRISE_QUOTA[subject].count);
@@ -212,25 +217,16 @@ export default function Dashboard({
     onStartVirtualPaper(mixPaper);
   };
 
-  const launchSubjectMiniTest = (subject: Subject) => {
-    const quota = SURPRISE_QUOTA[subject];
-    const available = [...(questionPoolBySubject.get(subject) ?? [])];
-    for (let i = available.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [available[i], available[j]] = [available[j], available[i]];
-    }
-    const picked = available.slice(0, quota.count).map((q, idx) => ({ ...q, id: idx + 1, marks: quota.marks }));
-    if (picked.length === 0) return;
-    const durationMinutes = subject === 'Rajasthan GK' ? 20 : subject === 'Mathematics' ? 12 : 10;
-    const miniPaper: Paper = {
-      paperId: `mini_${subject.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}`,
-      title: `${subject} Mini Test (${picked.length} Qs)`,
-      durationMinutes,
+  const launchSubjectTest = (subject: Subject) => {
+    const available = subjectPracticePool.filter((question) => question.subject === subject);
+    const picked = shuffled(available).slice(0, 50).map((question, index) => ({ ...question, id: index + 1 }));
+    onStartVirtualPaper({
+      paperId: crypto.randomUUID(),
+      title: `${subjectLabel(subject)} · ${picked.length} ${t('questions', 'सवाल')}`,
+      durationMinutes: 50,
       questions: picked,
       category: 'Subject Practice',
-      difficulty: 'Medium',
-    };
-    onStartVirtualPaper(miniPaper);
+    });
   };
 
   const handleExportExtras = async () => {
@@ -252,12 +248,13 @@ export default function Dashboard({
   };
 
   const navItems: Array<{ id: Tab; label: string; icon: typeof BookOpen }> = [
-    { id: 'papers', label: `Mock Papers (${papers.length})`, icon: BookOpen },
-    { id: 'history', label: `History (${userAttempts.length})`, icon: BarChart3 },
-    { id: 'bookmarks', label: `Bookmarks (${bookmarks.length})`, icon: Bookmark },
-    { id: 'typing', label: 'Typing (Phase-II)', icon: Keyboard },
-    { id: 'mistakes', label: 'Mistake Bank', icon: Award },
-    { id: 'settings', label: 'Settings & Backup', icon: Settings },
+    { id: 'papers', label: `${t('Mock papers', 'मॉक पेपर')} (${papers.length})`, icon: BookOpen },
+    { id: 'practice', label: t('Practice', 'अभ्यास'), icon: TrendingUp },
+    { id: 'history', label: `${t('History', 'इतिहास')} (${userAttempts.length})`, icon: BarChart3 },
+    { id: 'bookmarks', label: `${t('Bookmarks', 'बुकमार्क')} (${bookmarks.length})`, icon: Bookmark },
+    { id: 'typing', label: t('Typing (Phase-II)', 'टाइपिंग (चरण II)'), icon: Keyboard },
+    { id: 'mistakes', label: t('Mistake Bank', 'गलत सवाल'), icon: Award },
+    { id: 'settings', label: t('Settings & Backup', 'सेटिंग और बैकअप'), icon: Settings },
   ];
 
   return (
@@ -267,13 +264,13 @@ export default function Dashboard({
           <div>
             <h1 className="text-xl font-extrabold text-slate-900">RVUNL Junior Assistant CBT</h1>
             <p className="text-xs text-slate-500">
-              Candidate: <span className="font-bold text-blue-800">{userName}</span> · Phase-I OMNIBUS &amp; Phase-II Typing
+              {t("Candidate:", "अभ्यर्थी")} <span className="font-bold text-blue-800">{userName}</span>
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800">
               <Flame className="h-4 w-4 text-amber-600" />
-              Daily Streak: {streakDays} {streakDays === 1 ? 'Day' : 'Days'}
+              {t("Daily Streak:", "लगातार अभ्यास")} {streakDays} {streakDays === 1 ? 'Day' : 'Days'}
             </div>
             <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
               {(['light', 'dark', 'warm'] as ThemeMode[]).map((mode) => (
@@ -297,7 +294,7 @@ export default function Dashboard({
               onClick={onLogout}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              <LogOut className="h-3.5 w-3.5" /> Switch Profile
+              <LogOut className="h-3.5 w-3.5" /> {t("Switch Profile", "प्रोफ़ाइल बदलें")}
             </button>
           </div>
         </div>
@@ -322,13 +319,21 @@ export default function Dashboard({
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-blue-200 bg-blue-50 p-4" aria-label={t("Today's total score", 'आज का कुल स्कोर')}>
+          <div>
+            <h2 className="text-sm font-semibold text-blue-900">{t("Today's total score", 'आज का कुल स्कोर')}</h2>
+            <p className="text-sm text-blue-800">{totalToday.count} {t('completed papers', 'पेपर पूरे')}</p>
+          </div>
+          <strong className="text-2xl text-blue-900">{totalToday.earned} / {totalToday.possible}</strong>
+        </div>
         {draft && (
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
             <div>
-              <p className="text-xs font-bold uppercase text-amber-800">Interrupted Exam Found</p>
+              <p className="text-xs font-bold uppercase text-amber-800">{t("Interrupted Exam Found", "अधूरी परीक्षा मिली")}</p>
               <p className="text-sm font-bold text-slate-900">
-                {draft.paper.title} · {formatDuration(draft.remainingSeconds)} remaining
+                {draft.paper.title} · {formatDuration(draft.remainingSeconds)} {t("remaining", "बाकी")}
               </p>
+              <p className="text-xs text-amber-900">{t("Resume or discard this saved paper before starting another.", "नया पेपर शुरू करने से पहले यह पेपर जारी रखें या हटाएँ।")}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -339,18 +344,20 @@ export default function Dashboard({
                 }}
                 className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900"
               >
-                Discard
+                {t("Discard", "हटाएँ")}
               </button>
               <button
                 type="button"
                 onClick={() => onResumeDraft(draft)}
                 className="rounded-lg bg-amber-700 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
               >
-                Resume Interrupted Exam
+                {t("Resume Interrupted Exam", "अधूरी परीक्षा जारी रखें")}
               </button>
             </div>
           </div>
         )}
+
+        {tab === 'practice' && <PracticeLab userId={userId} papers={practicePapers} attempts={userAttempts} onStart={onStartVirtualPaper} disabled={Boolean(draft)} />}
 
         {tab === 'papers' && (
           <>
@@ -360,7 +367,7 @@ export default function Dashboard({
                   <div>
                     <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
                       <Shuffle className="h-5 w-5 text-blue-700" />
-                      Surprise Mix-Paper Generator
+                      {t("Surprise Mix-Paper Generator", "मिश्रित मॉक टेस्ट")}
                     </h2>
                     <p className="mt-1 text-xs text-slate-600">
                       Builds a fresh 70-question, 100-mark OMNIBUS exam by sampling across all {papers.length} papers.
@@ -369,18 +376,18 @@ export default function Dashboard({
                   <button
                     type="button"
                     onClick={launchSurpriseMix}
-                    disabled={!canGenerateSurprise}
+                    disabled={Boolean(draft) || !canGenerateSurprise}
                     title={canGenerateSurprise ? undefined : 'Import more unique questions for each subject.'}
                     className="shrink-0 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800"
                   >
-                    Generate Surprise Mock
+                    {t("Generate Surprise Mock", "मिश्रित मॉक टेस्ट बनाएँ")}
                   </button>
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-base font-bold text-slate-900">Subject-Wise Mini Tests</h2>
-                <p className="mt-1 text-xs text-slate-600">Practice a single subject under timed conditions.</p>
+                <h2 className="text-base font-bold text-slate-900">{t("Subject-Wise Tests", "विषयवार टेस्ट")}</h2>
+                <p className="mt-1 text-xs text-slate-600">{t("50 questions in 50 minutes.", "50 सवाल, 50 मिनट।")}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <select
                     value={miniSubject}
@@ -389,16 +396,17 @@ export default function Dashboard({
                   >
                     {SUBJECTS.map((s) => (
                       <option key={s} value={s}>
-                        {s} ({SURPRISE_QUOTA[s].count} Qs)
+                        {subjectLabel(s)} (50)
                       </option>
                     ))}
                   </select>
                   <button
                     type="button"
-                    onClick={() => launchSubjectMiniTest(miniSubject)}
+                    disabled={Boolean(draft)}
+                    onClick={() => launchSubjectTest(miniSubject)}
                     className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                   >
-                    Start Mini Test
+                    {t("Start subject test", "विषय का टेस्ट शुरू करें")}
                   </button>
                 </div>
               </div>
@@ -407,18 +415,19 @@ export default function Dashboard({
             {weakSubjects.length > 0 && (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
                 <h3 className="flex items-center gap-2 text-sm font-bold text-rose-900">
-                  <AlertTriangle className="h-4 w-4" /> Focus Area Alerts (Below 60% in Last 5 Attempts)
+                  <AlertTriangle className="h-4 w-4" /> {t("Focus Area Alerts (Below 60% in Last 5 Attempts)", "कमज़ोर विषय (पिछले 5 टेस्ट में 60% से कम)")}
                 </h3>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {weakSubjects.map((w) => (
                     <button
                       key={w.subject}
                       type="button"
-                      onClick={() => launchSubjectMiniTest(w.subject)}
+                      disabled={Boolean(draft)}
+                      onClick={() => launchSubjectTest(w.subject)}
                       className="inline-flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
                     >
-                      <span>{w.subject}: {w.accuracy}%</span>
-                      <span className="rounded bg-rose-700 px-1.5 py-0.5 text-[10px] text-white">Practice Now</span>
+                      <span>{subjectLabel(w.subject)} · {w.accuracy}%</span>
+                      <span className="rounded bg-rose-700 px-1.5 py-0.5 text-[10px] text-white">{t("Practice Now", "अभी अभ्यास करें")}</span>
                     </button>
                   ))}
                 </div>
@@ -441,21 +450,22 @@ export default function Dashboard({
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-500">
-                            <Clock3 className="h-3 w-3" /> Pending
+                            <Clock3 className="h-3 w-3" /> {t("Pending", "बाकी")}
                           </span>
                         )}
                       </div>
                       <h3 className="mt-3 text-base font-bold text-slate-900">{paper.title}</h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        {paper.questions.length} Questions · {paper.durationMinutes} Minutes
+                        {paper.questions.length} {t('questions', 'सवाल')} · {paper.durationMinutes} {t('minutes', 'मिनट')}
                       </p>
                     </div>
                     <button
                       type="button"
+                      disabled={Boolean(draft)}
                       onClick={() => onStart(paper.paperId)}
                       className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-800"
                     >
-                      <Play className="h-3.5 w-3.5" /> Start Exam
+                      <Play className="h-3.5 w-3.5" /> {t("Start Exam", "परीक्षा शुरू करें")}
                     </button>
                   </div>
                 );
@@ -466,10 +476,18 @@ export default function Dashboard({
 
         {tab === 'history' && (
           <div className="space-y-6">
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <label className="text-sm font-semibold text-slate-700">
+                {t('Score date', 'स्कोर की तारीख')}
+                <input type="date" className="ml-2 rounded-lg border px-2 py-1" value={historyDay} max={today}
+                  onChange={(event) => setHistoryDay(event.target.value || today)} />
+              </label>
+              <p className="text-sm text-slate-700">{selectedDayTotal.count} {t('completed papers', 'पेपर पूरे')} · {t('Total score', 'कुल स्कोर')} <strong>{selectedDayTotal.earned} / {selectedDayTotal.possible}</strong></p>
+            </section>
             {trendData.length > 0 && (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="mb-4 flex items-center gap-2 text-base font-bold text-slate-900">
-                  <TrendingUp className="h-5 w-5 text-blue-700" /> Score Trend ({userName})
+                  <TrendingUp className="h-5 w-5 text-blue-700" /> {t('Score trend', 'अंकों की प्रगति')} ({userName})
                 </h2>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -486,9 +504,9 @@ export default function Dashboard({
             )}
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="mb-4 text-base font-bold text-slate-900">Past Attempts</h2>
+              <h2 className="mb-4 text-base font-bold text-slate-900">{t("Past Attempts", "पिछले टेस्ट")}</h2>
               {userAttempts.length === 0 ? (
-                <p className="text-sm text-slate-500">No completed attempts yet.</p>
+                <p className="text-sm text-slate-500">{t("No completed attempts yet.", "अभी कोई टेस्ट पूरा नहीं हुआ।")}</p>
               ) : (
                 <div className="space-y-2">
                   {userAttempts.map((a) => (
@@ -508,7 +526,7 @@ export default function Dashboard({
                           onClick={() => onOpenAttempt(a)}
                           className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
                         >
-                          View Scorecard
+                          {t("View Scorecard", "रिज़ल्ट देखें")}
                         </button>
                       </div>
                     </div>
@@ -521,9 +539,9 @@ export default function Dashboard({
 
         {tab === 'bookmarks' && (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-base font-bold text-slate-900">Bookmarked Questions ({userName})</h2>
+            <h2 className="mb-4 text-base font-bold text-slate-900">{t('Bookmarked questions', 'बुकमार्क किए सवाल')} ({userName})</h2>
             {bookmarks.length === 0 ? (
-              <p className="text-sm text-slate-500">No bookmarked questions yet. Star any question inside Paper Review.</p>
+              <p className="text-sm text-slate-500">{t("No bookmarked questions yet. Star any question inside Paper Review.", "अभी कोई सवाल बुकमार्क नहीं है। पेपर की समीक्षा से सवाल बुकमार्क करें।")}</p>
             ) : (
               <div className="space-y-4">
                 {bookmarks.map((b) => (
@@ -531,12 +549,12 @@ export default function Dashboard({
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
-                          {b.question.subject} · {b.paperTitle}
+                          {subjectLabel(b.question.subject)} · {b.paperTitle}
                         </span>
                         <p className="mt-2 text-sm font-semibold text-slate-900">{b.question.question_en}</p>
                         <p className="mt-1 text-xs text-slate-600">{b.question.question_hi}</p>
                         <p className="mt-2 text-xs font-bold text-emerald-700">
-                          Correct Answer: ({String.fromCharCode(65 + b.question.correctIndex)}) {b.question.options_en[b.question.correctIndex]}
+                          {t('Correct answer', 'सही जवाब')} · ({String.fromCharCode(65 + b.question.correctIndex)}) {b.question.options_en[b.question.correctIndex]}
                         </p>
                       </div>
                       <button
@@ -544,7 +562,7 @@ export default function Dashboard({
                         onClick={() => setBookmarks(toggleBookmark(userId, b.paperId, b.paperTitle, b.question))}
                         className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       >
-                        Remove
+                        {t("Remove", "हटाएँ")}
                       </button>
                     </div>
                   </div>
@@ -556,15 +574,15 @@ export default function Dashboard({
 
         {tab === 'typing' && <TypingPractice userId={userId} userName={userName} />}
 
-        {tab === 'mistakes' && <MistakeBank userId={userId} attempts={userAttempts} papers={papers} onPractice={onStartVirtualPaper} />}
+        {tab === 'mistakes' && <MistakeBank userId={userId} attempts={userAttempts} papers={papers} onPractice={onStartVirtualPaper} disabled={Boolean(draft)} />}
 
         {tab === 'settings' && (
           <div className="space-y-6">
             <UpdateManager />
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-base font-bold text-slate-900">Profile Extras Backup ({userName})</h3>
+              <h3 className="text-base font-bold text-slate-900">{t('Profile extras backup', 'प्रोफ़ाइल का बैकअप')} ({userName})</h3>
               <p className="mt-1 text-xs text-slate-500">
-                Export or restore your bookmarks, typing history, and eye-comfort theme preference as JSON.
+                {t("Export or restore your bookmarks, typing history, and eye-comfort theme preference as JSON.", "बुकमार्क, टाइपिंग इतिहास और थीम का JSON बैकअप लें या वापस लाएँ।")}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -572,14 +590,14 @@ export default function Dashboard({
                   onClick={handleExportExtras}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                 >
-                  <Download className="h-4 w-4" /> Export Extras (.json)
+                  <Download className="h-4 w-4" /> {t("Export Extras (.json)", "बैकअप निकालें (.json)")}
                 </button>
                 <button
                   type="button"
                   onClick={() => extrasInputRef.current?.click()}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  <Upload className="h-4 w-4" /> Import Extras (.json)
+                  <Upload className="h-4 w-4" /> {t("Import Extras (.json)", "बैकअप लाएँ (.json)")}
                 </button>
                 <input
                   ref={extrasInputRef}
