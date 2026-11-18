@@ -41,6 +41,9 @@ jobs:
       - name: Build frontend and Electron app
         run: npm run build
 
+      - name: Verify Hindi PDF and compact UI on Windows
+        run: npx electron scripts/check-native-pdf.cjs
+
       - name: Package Windows executables
         run: npx electron-builder --win --x64 --publish never
 
@@ -58,6 +61,8 @@ jobs:
             release/*.exe
             release/*.yml
             release/*.blockmap
+            release/Hindi-results-check.pdf
+            release/*-check.png
           if-no-files-found: error
           retention-days: 30
 

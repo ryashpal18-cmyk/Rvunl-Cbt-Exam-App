@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('rvunlAPI', {
   importBackup: (pin: string) => ipcRenderer.invoke('admin:backup-import', pin),
   saveExportFile: (fileName: string, data: number[], kind: 'csv' | 'pdf', pin: string) => ipcRenderer.invoke('admin:file-save', fileName, data, kind, pin),
 
+  createResultsPdf: (data: unknown) => ipcRenderer.invoke('report:pdf', data),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:get-status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),

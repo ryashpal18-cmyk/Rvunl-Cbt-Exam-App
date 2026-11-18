@@ -1,12 +1,8 @@
+import { emptyPracticeState, practiceStorageKey, PracticeState, readPracticeState, TestRow } from '../services/practiceState';
 import { FormEvent, useMemo, useState } from 'react';
 import { Attempt, DIFFICULTIES, Difficulty, Paper, SUBJECTS } from '../types/exam';
 import { bankQuestions, BankQuestion, normalizeSearch, questionTopic, shuffled, syllabusTopics, topicKey } from '../utils/questionBank';
 import { useSubjectLabel, useTranslation } from '../uiLanguage';
-
-interface TestRow { topic: string; count: number }
-interface Preset { name: string; rows: TestRow[]; minutes: number; difficulty: Difficulty | '' }
-interface Goal { count: number; accuracy: number; since: string }
-interface PracticeState { checked: string[]; goals: Record<string, Goal>; presets: Preset[] }
 
 const inputClass = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
 const buttonClass = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40';
@@ -17,10 +13,10 @@ export default function PracticeLab({ userId, papers, attempts, onStart, disable
 }) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
-  const storageKey = `rvunl-practice-v1-${userId}`;
+  const storageKey = practiceStorageKey(userId);
   const [saved, setSaved] = useState<PracticeState>(() => {
-    try { return JSON.parse(localStorage.getItem(storageKey) ?? 'null') ?? { checked: [], goals: {}, presets: [] }; }
-    catch { return { checked: [], goals: {}, presets: [] }; }
+    try { return readPracticeState(userId); }
+    catch { return emptyPracticeState(); }
   });
   const questions = useMemo(() => bankQuestions(papers), [papers]);
   const topics = useMemo(() => syllabusTopics(papers), [papers]);

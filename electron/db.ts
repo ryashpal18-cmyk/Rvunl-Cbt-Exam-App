@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 interface PinRecord { salt: string; hash: string; }
@@ -31,32 +31,59 @@ const defaultProfiles = (): LocalProfile[] => [
 const emptyDatabase = (): Database => ({ version: 2, profiles: defaultProfiles(), pins: {}, attempts: [], papers: [] });
 const databasePath = () => join(app.getPath('userData'), 'rvunl-cbt-data.json');
 
+function readDatabase(path: string): Database {
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<Database>;
+  if (!parsed || !Array.isArray(parsed.profiles) || !parsed.profiles.length ||
+      !Array.isArray(parsed.attempts) || !Array.isArray(parsed.papers) ||
+      parsed.profiles.some((profile) => !profile || typeof profile.id !== 'string' || typeof profile.name !== 'string')) {
+    throw new Error('Invalid database structure.');
+  }
+  return {
+    version: 2,
+    profiles: parsed.profiles,
+    pins: parsed.pins ?? {},
+    adminPin: parsed.adminPin,
+    attempts: parsed.attempts,
+    papers: parsed.papers,
+  };
+}
+
 function loadDatabase(): Database {
   const path = databasePath();
-  if (!existsSync(path)) return emptyDatabase();
+  const backup = `${path}.bak`;
+  if (!existsSync(path) && !existsSync(backup)) return emptyDatabase();
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<Database>;
-    const profiles = Array.isArray(parsed.profiles) && parsed.profiles.length
-      ? parsed.profiles.filter((profile) => profile && typeof profile.id === 'string' && typeof profile.name === 'string')
-      : defaultProfiles();
-    return {
-      version: 2,
-      profiles,
-      pins: parsed.pins ?? {},
-      adminPin: parsed.adminPin,
-      attempts: Array.isArray(parsed.attempts) ? parsed.attempts : [],
-      papers: Array.isArray(parsed.papers) ? parsed.papers : [],
-    };
+    return readDatabase(path);
   } catch {
-    return emptyDatabase();
+    try {
+      return readDatabase(backup);
+    } catch {
+      throw new Error('Saved data could not be read. The original files have been preserved. Restore a valid backup or contact support.');
+    }
   }
 }
 
 function saveDatabase(database: Database): void {
   const path = databasePath();
+  const backup = `${path}.bak`;
+  if (existsSync(path)) {
+    let readable = true;
+    try { readDatabase(path); } catch { readable = false; }
+    if (readable) {
+      copyFileSync(path, `${backup}.tmp`);
+      renameSync(`${backup}.tmp`, backup);
+    } else {
+      // A recovered backup may be saved without discarding the damaged original.
+      copyFileSync(path, `${path}.corrupt-${Date.now()}-${randomBytes(4).toString('hex')}`);
+    }
+  }
   const tempPath = `${path}.tmp`;
   writeFileSync(tempPath, JSON.stringify(database, null, 2), 'utf8');
   renameSync(tempPath, path);
+  if (!existsSync(backup)) {
+    copyFileSync(path, `${backup}.tmp`);
+    renameSync(`${backup}.tmp`, backup);
+  }
 }
 
 function hashPin(pin: string, salt = ''): string {

@@ -19,7 +19,9 @@ declare global {
       importBackup: (pin: string) => Promise<{ state: StoredState; extras?: string[] } | null>;
       saveExportFile: (fileName: string, data: number[], kind: 'csv' | 'pdf', pin: string) => Promise<boolean>;
 
+      createResultsPdf: (data: { headers: string[]; rows: string[][]; generatedAt: string }) => Promise<number[]>;
       getAppVersion: () => Promise<string>;
+      getUpdateStatus: () => Promise<UpdateStatus>;
       checkForUpdates: () => Promise<void>;
       downloadUpdate: () => Promise<void>;
       installUpdate: () => Promise<void>;

@@ -73,20 +73,28 @@ function enterFullscreen(): void {
 
 export default function App() {
   const [uiLanguage, setUiLanguage] = useState<Language>(() => localStorage.getItem('rvunl-ui-language') === 'hi' ? 'hi' : 'en');
+  const [loadError, setLoadError] = useState('');
   const [state, setState] = useState<StoredState | null>(null);
   const [userId, setUserId] = useState<UserId | null>(null);
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [screen, setScreen] = useState<Screen>({ name: 'profile' });
 
   const reload = async () => {
-    const next = await storage.loadState();
-    const papers = new Map(builtInPapers.map((paper) => [paper.paperId, paper]));
-    for (const paper of next.papers) if (!papers.has(paper.paperId)) papers.set(paper.paperId, paper);
-    setState({ ...next, papers: [...papers.values()] });
+    try {
+      const next = await storage.loadState();
+      const papers = new Map(builtInPapers.map((paper) => [paper.paperId, paper]));
+      for (const paper of next.papers) if (!papers.has(paper.paperId)) papers.set(paper.paperId, paper);
+      setState({ ...next, papers: [...papers.values()] });
+      setLoadError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not load saved data.';
+      setLoadError(message);
+      throw error;
+    }
   };
 
   useEffect(() => {
-    reload();
+    void reload().catch(() => undefined);
   }, []);
 
   const currentProfile = state?.profiles.find((p) => p.id === userId) ?? null;
@@ -121,7 +129,14 @@ export default function App() {
   if (!state) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-semibold text-slate-600">
-        Loading RVUNL CBT Engine...
+        {loadError ? (
+          <div className="max-w-lg space-y-3 rounded-xl border bg-white p-5">
+            <p role="alert">{loadError}</p>
+            <button className="rounded-lg bg-blue-700 px-4 py-2 text-white" onClick={() => void reload().catch(() => undefined)}>
+              {uiLanguage === 'hi' ? 'फिर कोशिश करें' : 'Try again'}
+            </button>
+          </div>
+        ) : 'Loading RVUNL CBT Engine...'}
       </div>
     );
   }
