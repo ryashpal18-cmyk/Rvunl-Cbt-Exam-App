@@ -5,8 +5,13 @@ const { app, BrowserWindow } = require('electron');
 const { PDFDocument, PDFRawStream, decodePDFRawStream } = require('pdf-lib');
 const { createResultsPdf } = require('../dist-electron/resultsPdf.js');
 
+app.on('window-all-closed', () => {});
+
 app.whenReady().then(async () => {
   try {
+    // Keep one window alive while the temporary PDF window is destroyed.
+    const ui = new BrowserWindow({ show: false, width: 800, height: 760,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
     const bytes = await createResultsPdf({
       headers: ['नाम', 'पेपर', 'तारीख', 'अंक', 'प्रतिशत', 'समय', 'ऋणात्मक अंक'],
       rows: [
@@ -29,8 +34,6 @@ app.whenReady().then(async () => {
     fs.mkdirSync(output, { recursive: true });
     fs.writeFileSync(path.join(output, 'Hindi-results-check.pdf'), bytes);
     console.log('PASS: native Hindi PDF contains embedded Unicode mappings and one page.');
-    const ui = new BrowserWindow({ show: false, width: 800, height: 760,
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
     try {
       await ui.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
       const clickButton = async (label) => {
