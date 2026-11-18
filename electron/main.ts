@@ -1,3 +1,4 @@
+import { createResultsPdf } from './resultsPdf';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -5,8 +6,11 @@ import { basename, join } from 'node:path';
 import { addProfile, changeAdminPin, createBackup, deletePapers, deleteProfile, publicState, resetAttempts, restoreBackup, saveAttempt, savePapers, setPin, verifyAdminPin, verifyPin } from './db';
 
 let mainWindow: BrowserWindow | null = null;
+let updateStatus: Record<string, unknown> = { state: 'idle', message: 'Check for application updates.' };
+let updateDownload: Promise<unknown> | null = null;
 
 function sendUpdateStatus(status: Record<string, unknown>): void {
+  updateStatus = status;
   mainWindow?.webContents.send('update:status', status);
 }
 
@@ -30,6 +34,33 @@ function validateBackupExtras(value: unknown): asserts value is string[] {
     if (typeof extra?.userId !== 'string' || ids.has(extra.userId) ||
         !Array.isArray(extra.bookmarks) || !Array.isArray(extra.typingAttempts)) {
       throw new Error('Invalid or duplicate profile extras in backup.');
+    }
+    if (extra.practice !== undefined) {
+      const practice = extra.practice;
+      if (!practice || !Array.isArray(practice.checked) || practice.checked.some((item: unknown) => typeof item !== 'string') ||
+          !practice.goals || typeof practice.goals !== 'object' || Array.isArray(practice.goals) || !Array.isArray(practice.presets)) {
+        throw new Error('Invalid practice settings in backup.');
+      }
+      for (const item of Object.values(practice.goals)) {
+        const goal = item as { count: number; accuracy: number; since: string } | null;
+        if (!goal || !Number.isInteger(goal.count) || goal.count < 1 || goal.count > 5000 ||
+            !Number.isInteger(goal.accuracy) || goal.accuracy < 1 || goal.accuracy > 100 ||
+            typeof goal.since !== 'string' || !Number.isFinite(Date.parse(goal.since))) throw new Error('Invalid practice goal.');
+      }
+      for (const preset of practice.presets) {
+        if (!preset || typeof preset.name !== 'string' || !preset.name.trim() ||
+            !Array.isArray(preset.rows) || !Number.isInteger(preset.minutes) || preset.minutes < 1 || preset.minutes > 180 ||
+            !['', 'Easy', 'Medium', 'Hard'].includes(preset.difficulty) ||
+            preset.rows.some((row: { topic?: unknown; count?: unknown } | null) =>
+              !row || typeof row.topic !== 'string' || !Number.isInteger(row.count) || (row.count as number) < 1)) {
+          throw new Error('Invalid saved test.');
+        }
+      }
+    }
+    if (extra.draft !== undefined && extra.draft !== null &&
+        (extra.draft.userId !== extra.userId || !Array.isArray(extra.draft.paper?.questions) ||
+         !extra.draft.paper.questions.length || !Number.isFinite(extra.draft.remainingSeconds) || extra.draft.remainingSeconds < 0)) {
+      throw new Error('Invalid saved exam in backup.');
     }
     ids.add(extra.userId);
   }
@@ -103,7 +134,10 @@ app.whenReady().then(() => {
     return true;
   });
 
+  ipcMain.handle('report:pdf', async (_event, data) => Array.from(await createResultsPdf(data)));
+
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('update:get-status', () => updateStatus);
   ipcMain.handle('update:check', async () => {
     if (!app.isPackaged || process.platform !== 'win32' || process.env.PORTABLE_EXECUTABLE_FILE) {
       sendUpdateStatus({ state: 'not-available', message: 'Update checks are available in the installed Windows app.', version: app.getVersion() });
@@ -111,7 +145,12 @@ app.whenReady().then(() => {
     }
     await autoUpdater.checkForUpdates();
   });
-  ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
+  ipcMain.handle('update:download', async () => {
+    if (updateDownload) return updateDownload;
+    sendUpdateStatus({ state: 'downloading', message: 'Downloading update…', percent: 0 });
+    updateDownload = autoUpdater.downloadUpdate();
+    try { return await updateDownload; } finally { updateDownload = null; }
+  });
   ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(false, true));
 
   createWindow();

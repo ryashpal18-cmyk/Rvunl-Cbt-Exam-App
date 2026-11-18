@@ -118,7 +118,10 @@ export default function Dashboard({
   const [extrasMsg, setExtrasMsg] = useState<string | null>(null);
   const extrasInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setBookmarks(getBookmarks(userId)), [tab, userId]);
+  useEffect(() => {
+    setBookmarks(getBookmarks(userId));
+    setDraft(loadExamDraft(userId));
+  }, [tab, userId, attempts, papers]);
 
   const userAttempts = useMemo(
     () => attempts.filter((a) => a.userId === userId).sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
@@ -241,6 +244,7 @@ export default function Dashboard({
       const text = await file.text();
       importUserExtrasJson(userId, text);
       setBookmarks(getBookmarks(userId));
+      setDraft(loadExamDraft(userId));
       setExtrasMsg('Restored bookmarks and typing history successfully.');
     } catch {
       setExtrasMsg('Invalid backup JSON file.');

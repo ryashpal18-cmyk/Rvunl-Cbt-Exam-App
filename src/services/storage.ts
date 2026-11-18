@@ -120,7 +120,7 @@ export async function exportBackup(adminPin: string): Promise<boolean> {
     return window.rvunlAPI.exportBackup(adminPin, profiles.map(({ id }) => exportUserExtrasJson(id)));
   }
   if (!(await verifyBrowserAdmin(adminPin))) throw new Error('Incorrect admin PIN.');
-  const data = new TextEncoder().encode(JSON.stringify({ format: 'rvunl-cbt-backup', version: 1, exportedAt: new Date().toISOString(), ...browserLoad(), pins: {} }, null, 2));
+  const data = new TextEncoder().encode(JSON.stringify({ format: 'rvunl-cbt-backup', version: 1, exportedAt: new Date().toISOString(), ...browserLoad(), pins: {}, extras: browserLoad().profiles.map(({ id }) => exportUserExtrasJson(id)) }, null, 2));
   downloadBrowserFile(`rvunl-cbt-backup-${new Date().toISOString().slice(0, 10)}.json`, data, 'application/json');
   return true;
 }

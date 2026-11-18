@@ -1,3 +1,4 @@
+import { practiceStorageKey, readPracticeState, validatePracticeState } from './practiceState';
 import { BookmarkedQuestion, DraftExamState, Question, ThemeMode, TypingAttempt, UserId } from '../types/exam';
 
 const KEY = (suffix: string, userId: UserId) => `rvunl_v2_${suffix}_${userId}`;
@@ -74,11 +75,13 @@ export function clearExamDraft(userId: UserId): void {
 
 export function exportUserExtrasJson(userId: UserId): string {
   return JSON.stringify({
-    version: 2,
+    version: 3,
     userId,
     theme: getUserTheme(userId),
     bookmarks: getBookmarks(userId),
     typingAttempts: getTypingAttempts(userId),
+    practice: readPracticeState(userId),
+    draft: loadExamDraft(userId),
     exportedAt: new Date().toISOString(),
   }, null, 2);
 }
@@ -89,9 +92,20 @@ export function importUserExtrasJson(userId: UserId, raw: string): void {
     theme?: ThemeMode;
     bookmarks?: BookmarkedQuestion[];
     typingAttempts?: TypingAttempt[];
+    practice?: unknown;
+    draft?: DraftExamState | null;
   };
   if (data.userId !== userId) throw new Error('This backup belongs to a different profile.');
+  if (data.practice !== undefined) validatePracticeState(data.practice);
+  if (data.draft !== undefined && data.draft !== null &&
+      (data.draft.userId !== userId || !Array.isArray(data.draft.paper?.questions) ||
+       !data.draft.paper.questions.length || !Number.isFinite(data.draft.remainingSeconds) || data.draft.remainingSeconds < 0)) {
+    throw new Error('Invalid saved exam in backup.');
+  }
   if (data.theme === 'light' || data.theme === 'dark' || data.theme === 'warm') setUserTheme(userId, data.theme);
   if (Array.isArray(data.bookmarks)) localStorage.setItem(KEY('bookmarks', userId), JSON.stringify(data.bookmarks));
+  if (data.practice !== undefined) localStorage.setItem(practiceStorageKey(userId), JSON.stringify(data.practice));
+  if (data.draft === null) clearExamDraft(userId);
+  else if (data.draft !== undefined) saveExamDraft(data.draft);
   if (Array.isArray(data.typingAttempts)) localStorage.setItem(KEY('typing', userId), JSON.stringify(data.typingAttempts.filter((attempt) => attempt?.userId === userId)));
 }

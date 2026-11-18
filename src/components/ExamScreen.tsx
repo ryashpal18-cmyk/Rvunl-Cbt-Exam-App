@@ -21,7 +21,7 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
   const subjectLabel = useSubjectLabel();
   const [pending, setPending] = useState<DraftExamState['pendingResponse'] | null>(initialDraft?.pendingResponse ?? null);
   const fullPaperDialog = useRef<HTMLDialogElement>(null);
-  const [paletteHidden, setPaletteHidden] = useState(false);
+  const [paletteHidden, setPaletteHidden] = useState(() => window.innerWidth < 1024);
   const [showFullPaper, setShowFullPaper] = useState(false);
   useEffect(() => {
     if (showFullPaper) fullPaperDialog.current?.showModal();
@@ -29,7 +29,7 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
 
   const totalSeconds = paper.durationMinutes * 60;
   const [currentIndex, setCurrentIndex] = useState(initialDraft?.currentIndex ?? 0);
-  const [language, setLanguage] = useState(config.language);
+  const [language, setLanguage] = useState(initialDraft?.language ?? config.language);
   const [responses, setResponses] = useState<Record<string, QuestionResponse>>(() => {
     if (initialDraft?.responses) return initialDraft.responses;
     const firstId = String(paper.questions[0].id);
@@ -43,13 +43,20 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
   const [saving, setSaving] = useState(false);
   const submission = useRef<Parameters<Props['onSubmit']> | null>(null);
   const [showScratchpad, setShowScratchpad] = useState(false);
-  const [scratchText, setScratchText] = useState('');
+  const [scratchText, setScratchText] = useState(initialDraft?.scratchText ?? '');
   const [tabSwitchCount, setTabSwitchCount] = useState(initialDraft?.tabSwitchCount ?? 0);
   const [focusWarning, setFocusWarning] = useState(false);
 
   const enteredAt = useRef(Date.now());
   const deadline = useRef(Date.now() + initialRemaining * 1000);
   const submitted = useRef(false);
+  const saveInProgress = useRef(false);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const languageRef = useRef(language);
+  languageRef.current = language;
+  const scratchRef = useRef(scratchText);
+  scratchRef.current = scratchText;
   const responsesRef = useRef(responses);
   responsesRef.current = responses;
   const currentIndexRef = useRef(currentIndex);
@@ -80,14 +87,15 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
 
   const withCurrentTime = useCallback((base: Record<string, QuestionResponse>, index: number) => {
     const qId = String(paper.questions[index].id);
-    const elapsed = Math.max(0, Math.round((Date.now() - enteredAt.current) / 1000));
+    const elapsed = Math.max(0, Math.round((Math.min(Date.now(), deadline.current) - enteredAt.current) / 1000));
     enteredAt.current = Date.now();
     const prev = base[qId] ?? { visited: true, markedForReview: false, timeSpentSec: 0 };
     return { ...base, [qId]: { ...prev, visited: true, timeSpentSec: prev.timeSpentSec + elapsed } };
   }, [paper.questions]);
 
   const saveSubmission = useCallback(async () => {
-    if (!submission.current) return;
+    if (!submission.current || saveInProgress.current) return;
+    saveInProgress.current = true;
     setSaving(true);
     setSaveError(false);
     try {
@@ -97,6 +105,8 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
     } catch {
       setSaveError(true);
       setSaving(false);
+    } finally {
+      saveInProgress.current = false;
     }
   }, [onSubmit, userId]);
 
@@ -105,11 +115,20 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
     submitted.current = true;
     const finalized = withCurrentTime(responsesRef.current, currentIndexRef.current);
     const timeTaken = Math.min(totalSeconds, Math.max(1, totalSeconds - Math.round((deadline.current - Date.now()) / 1000)));
-    submission.current = [finalized, timeTaken, byTimer, tabSwitchRef.current];
+    submission.current = [finalized, timeTaken, byTimer || Date.now() >= deadline.current, tabSwitchRef.current];
     setShowSubmit(false);
     setShowFullPaper(false);
     void saveSubmission();
   }, [saveSubmission, totalSeconds, withCurrentTime]);
+
+  const canEdit = useCallback(() => {
+    if (submitted.current) return false;
+    if (Date.now() >= deadline.current) {
+      submitExam(true);
+      return false;
+    }
+    return true;
+  }, [submitExam]);
 
   // Countdown Timer
   useEffect(() => {
@@ -121,10 +140,11 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
     return () => clearInterval(timer);
   }, [submitExam]);
 
-  const persistDraft = useCallback((snapshot: Record<string, QuestionResponse>, index: number, pendingResponse?: DraftExamState['pendingResponse']) => {
+  const persistDraft = useCallback((snapshot: Record<string, QuestionResponse>, index: number, pendingResponse: DraftExamState['pendingResponse'] = pendingRef.current ?? undefined) => {
     try {
       saveExamDraft({
         attemptId, userId, paper, config, responses: snapshot, currentIndex: index, pendingResponse,
+        language: languageRef.current, scratchText: scratchRef.current,
         remainingSeconds: Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000)),
         tabSwitchCount: tabSwitchRef.current,
         lastSavedAt: new Date().toISOString(),
@@ -138,7 +158,7 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
   }, [attemptId, config, paper, userId]);
 
   const returnToDashboard = () => {
-    if (saving) return;
+    if (saveInProgress.current) return;
     if (!submitted.current && deadline.current <= Date.now()) {
       submitExam(true);
       return;
@@ -160,8 +180,14 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
       setResponses(snapshot);
       persistDraft(snapshot, currentIndexRef.current);
     };
+    save();
     const timer = setInterval(save, 5000);
-    const onPageHide = () => { if (!submitted.current) persistDraft(responsesRef.current, currentIndexRef.current); };
+    const onPageHide = () => {
+      if (submitted.current) return;
+      const snapshot = withCurrentTime(responsesRef.current, currentIndexRef.current);
+      responsesRef.current = snapshot;
+      persistDraft(snapshot, currentIndexRef.current);
+    };
     window.addEventListener('pagehide', onPageHide);
     return () => {
       clearInterval(timer);
@@ -170,9 +196,12 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
   }, [persistDraft, withCurrentTime]);
 
   const setAnswer = useCallback((selectedIndex?: number) => {
-    if (submitted.current) return;
+    if (!canEdit()) return;
     if (config.saveAndNext) {
-      setPending({ selectedIndex, guessed: false });
+      const next = { selectedIndex, guessed: false };
+      pendingRef.current = next;
+      setPending(next);
+      persistDraft(responsesRef.current, currentIndexRef.current, next);
       return;
     }
     const index = currentIndexRef.current;
@@ -182,10 +211,11 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
     responsesRef.current = next;
     setResponses(next);
     persistDraft(next, index);
-  }, [config.saveAndNext, paper.questions, persistDraft]);
+  }, [canEdit, config.saveAndNext, paper.questions, persistDraft]);
 
   const navigate = useCallback((target: number, changes?: Partial<QuestionResponse>) => {
-    if (submitted.current) return;
+    if (!canEdit()) return;
+    pendingRef.current = null;
     setPending(null);
     const nextIdx = Math.max(0, Math.min(paper.questions.length - 1, target));
     const updated = withCurrentTime(responsesRef.current, currentIndexRef.current);
@@ -200,29 +230,31 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
     setResponses(updated);
     setCurrentIndex(nextIdx);
     persistDraft(updated, nextIdx);
-  }, [paper.questions, persistDraft, withCurrentTime]);
+  }, [canEdit, paper.questions, persistDraft, withCurrentTime]);
 
   const saveAndNavigate = useCallback((target: number, markedForReview?: boolean) => {
     const review = markedForReview === undefined ? {} : { markedForReview };
-    navigate(target, { ...review, ...pending });
-  }, [navigate, pending]);
+    navigate(target, { ...review, ...pendingRef.current });
+  }, [navigate]);
 
   const toggleGuess = () => {
-    const id = String(paper.questions[currentIndexRef.current].id);
+    if (!canEdit()) return;
+    const index = currentIndexRef.current;
+    const id = String(paper.questions[index].id);
     const current = responsesRef.current[id];
-    if (pending) {
-      if (pending.selectedIndex !== undefined) setPending({ ...pending, guessed: !pending.guessed });
-      return;
-    }
-    if (current?.selectedIndex === undefined || submitted.current) return;
-    const next = { ...responsesRef.current, [id]: { ...current, guessed: !current.guessed } };
+    const selected = pendingRef.current ?? current;
+    if (selected?.selectedIndex === undefined) return;
     if (config.saveAndNext) {
-      setPending({ selectedIndex: current.selectedIndex, guessed: !current.guessed });
+      const next = { selectedIndex: selected.selectedIndex, guessed: !selected.guessed };
+      pendingRef.current = next;
+      setPending(next);
+      persistDraft(responsesRef.current, index, next);
       return;
     }
+    const next = { ...responsesRef.current, [id]: { ...current, guessed: !current.guessed } };
     responsesRef.current = next;
     setResponses(next);
-    persistDraft(next, currentIndexRef.current);
+    persistDraft(next, index);
   };
 
   // Keyboard shortcuts (disabled in Strict Mouse-Only Mode)
@@ -273,8 +305,8 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
   const opts = language === 'hi' ? question.options_hi : question.options_en;
 
   return (
-    <div className="flex h-screen flex-col bg-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 shadow-sm">
+    <div className="flex h-screen min-h-0 flex-col bg-slate-100">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-6 py-3 shadow-sm">
         <div>
           <span className="text-xs font-bold uppercase tracking-wider text-blue-700">RVUNL Phase-I CBT</span>
           <h1 className="text-sm font-bold text-slate-900 md:text-base">{paper.title}</h1>
@@ -291,7 +323,7 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
           </button>
           <button
             type="button"
-            onClick={() => setShowScratchpad((v) => !v)}
+            onClick={() => { setShowScratchpad((v) => !v); setPaletteHidden(false); }}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold ${showScratchpad ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700'}`}
           >
             <NotebookPen className="h-4 w-4" /> {t("Rough Pad", "रफ़ पेज")}
@@ -331,7 +363,13 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
             </div>
             <button
               type="button"
-              onClick={() => setLanguage((l) => (l === 'en' ? 'hi' : 'en'))}
+              onClick={() => {
+                if (!canEdit()) return;
+                const next = languageRef.current === 'en' ? 'hi' : 'en';
+                languageRef.current = next;
+                setLanguage(next);
+                persistDraft(responsesRef.current, currentIndexRef.current);
+              }}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
             >
               <Languages className="h-4 w-4" /> {language === 'en' ? 'हिन्दी में देखें' : 'View in English'}
@@ -423,22 +461,35 @@ export default function ExamScreen({ attemptId, userId, userName, paper, config,
           </footer>
         </main>
 
-        {(!paletteHidden || showScratchpad) && <div className="hidden h-full flex-col overflow-hidden lg:flex">
+        {(!paletteHidden || showScratchpad) && <div className="fixed inset-x-0 bottom-0 top-24 z-30 flex flex-col overflow-hidden border-t border-slate-300 bg-white shadow-xl lg:static lg:z-auto lg:h-full lg:border-t-0 lg:shadow-none">
+          <button type="button" className="border-b px-4 py-2 text-right text-sm font-semibold text-blue-800 lg:hidden" onClick={() => { setPaletteHidden(true); setShowScratchpad(false); }}>
+            {t('Close panel', 'पैनल बंद करें')}
+          </button>
           {showScratchpad ? (
             <div className="flex h-full flex-col border-l border-slate-200 bg-amber-50 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-amber-900">{t("Digital Rough Pad", "डिजिटल रफ़ पेज")}</h3>
-                <button onClick={() => setScratchText('')} className="text-xs font-semibold text-amber-800 hover:underline">{t("Clear", "साफ़ करें")}</button>
+                <button onClick={() => {
+                  if (!canEdit()) return;
+                  scratchRef.current = '';
+                  setScratchText('');
+                  persistDraft(responsesRef.current, currentIndexRef.current);
+                }} className="text-xs font-semibold text-amber-800 hover:underline">{t("Clear", "साफ़ करें")}</button>
               </div>
               <textarea
                 value={scratchText}
-                onChange={(e) => setScratchText(e.target.value)}
+                onChange={(event) => {
+                  if (!canEdit()) return;
+                  scratchRef.current = event.target.value;
+                  setScratchText(event.target.value);
+                  persistDraft(responsesRef.current, currentIndexRef.current);
+                }}
                 placeholder={t("Type Maths / Reasoning rough calculations here (auto-cleared on submit)...", "गणना यहाँ करें। सबमिट करने पर यह पेज खाली हो जाएगा।")}
                 className="flex-1 resize-none rounded-xl border border-amber-200 bg-white p-3 font-mono text-sm text-slate-800 focus:outline-none"
               />
             </div>
           ) : (
-            <QuestionPalette questions={paper.questions} responses={responses} currentIndex={currentIndex} onSelect={(idx) => navigate(idx)} />
+            <QuestionPalette questions={paper.questions} responses={responses} currentIndex={currentIndex} onSelect={(idx) => { navigate(idx); if (window.innerWidth < 1024) setPaletteHidden(true); }} />
           )}
         </div>}
       </div>

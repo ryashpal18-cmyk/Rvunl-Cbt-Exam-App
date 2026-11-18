@@ -121,7 +121,7 @@ function safePdfText(font: PDFFont, value: string): string {
       font.encodeText(character);
       safe += character;
     } catch {
-      safe += '?';
+      throw new Error('To export this text as PDF, use the installed Windows app.');
     }
   }
   return safe;
@@ -262,6 +262,15 @@ export async function buildResultsPdf(
   attempts: Attempt[],
   profiles: ProfileRecord[],
 ): Promise<Uint8Array> {
+  const reportRows = sortedRows(attempts, profiles);
+  if (window.rvunlAPI?.createResultsPdf) {
+    const bytes = await window.rvunlAPI.createResultsPdf({
+      headers: ['Profile / नाम', 'Paper / पेपर', 'Date / तारीख', 'Score / अंक', 'Percent / प्रतिशत', 'Time / समय', 'Negative marking / ऋणात्मक अंक'],
+      rows: reportRows.map((row) => COLUMNS.map((column) => row[column.key])),
+      generatedAt: formatLocalDateTime(new Date().toISOString()),
+    });
+    return new Uint8Array(bytes);
+  }
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica);
   const boldFont = await document.embedFont(StandardFonts.HelveticaBold);

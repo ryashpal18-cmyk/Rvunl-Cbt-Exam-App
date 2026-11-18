@@ -158,6 +158,8 @@ export interface DraftExamState {
   config: ExamConfig;
   responses: Record<string, QuestionResponse>;
   currentIndex: number;
+  language?: Language;
+  scratchText?: string;
   pendingResponse?: Pick<QuestionResponse, 'selectedIndex' | 'guessed'>;
   remainingSeconds: number;
   tabSwitchCount: number;
