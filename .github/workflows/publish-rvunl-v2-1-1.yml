@@ -1,0 +1,49 @@
+name: Publish verified RVUNL v2.1.1 fixes
+on:
+  push:
+    branches: [publish-rvunl-v2-1-1]
+    paths: ['.github/workflows/publish-rvunl-v2-1-1.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_ID: '44369648530'
+      EXPECTED_HEAD: 'a9b210525c3c507d8f5695fce9e2d54438d33034'
+      VERSION_COMMIT: '98248807c1309e389a0ece00fb7660c1777395a4'
+      TAG: v2.1.1
+    steps:
+      - name: Verify the Windows test run and release commit
+        run: |
+          set -euo pipefail
+          run=$(gh api "repos/$REPO/actions/runs/$RUN_ID")
+          jq -e --arg head "$EXPECTED_HEAD" '.head_sha == $head and .conclusion == "success"' <<<"$run"
+          test "$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" = "$VERSION_COMMIT"
+          merged_tree=$(gh api "repos/$REPO/git/commits/$VERSION_COMMIT" --jq .tree.sha)
+          head_tree=$(gh api "repos/$REPO/git/commits/$EXPECTED_HEAD" --jq .tree.sha)
+          test "$merged_tree" = "$head_tree"
+          version=$(gh api "repos/$REPO/contents/package.json?ref=$VERSION_COMMIT" --jq .content | base64 -d | jq -r .version)
+          test "v$version" = "$TAG"
+      - name: Download and validate the Windows executables and update metadata
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$REPO" --name RVUNL-CBT-Mock-App-Windows --dir release
+          installer="RVUNL-CBT-Mock-Exam-Setup-${TAG#v}.exe"
+          portable="RVUNL-CBT-Mock-Exam-${TAG#v}.exe"
+          for asset in "$installer" "$portable" "$installer.blockmap" latest.yml; do test -s "release/$asset"; done
+          test "$(ruby -ryaml -e 'puts YAML.load_file("release/latest.yml").fetch("path")')" = "$installer"
+          checksum=$(openssl dgst -sha512 -binary "release/$installer" | openssl base64 -A)
+          grep -Fq "$checksum" release/latest.yml
+      - name: Publish the complete release
+        run: |
+          set -euo pipefail
+          installer="RVUNL-CBT-Mock-Exam-Setup-${TAG#v}.exe"
+          portable="RVUNL-CBT-Mock-Exam-${TAG#v}.exe"
+          gh release create "$TAG" --repo "$REPO" --target "$VERSION_COMMIT" --draft --title "RVUNL CBT v2.1.1" --notes "Fixes saved exam language and scratchpad, pending answer recovery, deadline enforcement, damaged data recovery, complete practice backups, Hindi PDF reports, update progress and compact-screen controls."
+          gh release upload "$TAG" --repo "$REPO" "release/$installer" "release/$portable" "release/$installer.blockmap" release/latest.yml
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest
