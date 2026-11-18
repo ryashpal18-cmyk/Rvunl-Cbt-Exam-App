@@ -72,3 +72,18 @@ export function formatDuration(totalSeconds: number): string {
   if (hours) return `${hours}h ${minutes}m ${seconds}s`;
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
+
+export function localDateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+export function dailyScore(attempts: Attempt[], day: string) {
+  const dailyAttempts = attempts.filter((attempt) => localDateKey(new Date(attempt.timestamp)) === day);
+  return {
+    count: dailyAttempts.length,
+    earned: roundScore(dailyAttempts.reduce((sum, attempt) => sum + attempt.totalScore, 0)),
+    possible: roundScore(dailyAttempts.reduce((sum, attempt) => sum + attempt.maxScore, 0)),
+  };
+}

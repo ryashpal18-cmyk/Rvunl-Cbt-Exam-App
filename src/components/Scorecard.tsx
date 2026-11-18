@@ -36,6 +36,11 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
   return (
     <div className="min-h-screen bg-slate-100 p-6 md:p-10">
       <div className="mx-auto max-w-5xl space-y-6">
+        <div className="no-print flex justify-start">
+          <button onClick={onDashboard} className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
+              <Home className="h-4 w-4" /> {t("Dashboard", "डैशबोर्ड")}
+            </button>
+        </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6">
             <div>
@@ -148,9 +153,6 @@ export default function Scorecard({ attempt, paper, onReview, onDashboard }: Pro
           </section>
 
           <div className="no-print mt-8 flex flex-wrap items-center justify-between gap-3">
-            <button onClick={onDashboard} className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
-              <Home className="h-4 w-4" /> {t("Dashboard", "डैशबोर्ड")}
-            </button>
             <div className="flex flex-wrap gap-3">
               <button onClick={() => window.print()} className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
                 <Printer className="h-4 w-4" /> {t("Print / Save as PDF", "प्रिंट करें या PDF सेव करें")}

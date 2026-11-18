@@ -11,9 +11,10 @@ interface Props {
   attempt: Attempt;
   paper: Paper;
   onBack: () => void;
+  onDashboard: () => void;
 }
 
-export default function PaperReview({ userId, attempt, paper, onBack }: Props) {
+export default function PaperReview({ userId, attempt, paper, onBack, onDashboard }: Props) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
   const appLanguage = useAppLanguage();
@@ -55,13 +56,16 @@ export default function PaperReview({ userId, attempt, paper, onBack }: Props) {
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
-              <ArrowLeft className="h-4 w-4" /> Back to scorecard
+              <ArrowLeft className="h-4 w-4" /> {t('Back to scorecard', 'रिज़ल्ट पर लौटें')}
             </button>
             <div>
               <h1 className="text-lg font-bold text-slate-900">{t('Detailed paper review', 'सवालों की विस्तृत समीक्षा')}</h1>
               <p className="text-xs text-slate-500">{paper.title}</p>
             </div>
           </div>
+          <button onClick={onDashboard} className="rounded-lg border border-blue-300 px-3 py-2 text-sm font-bold text-blue-800">
+            {t('Dashboard', 'डैशबोर्ड')}
+          </button>
           <button
             onClick={() => setLanguage((l) => (l === 'en' ? 'hi' : 'en'))}
             className="flex items-center gap-1.5 rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"

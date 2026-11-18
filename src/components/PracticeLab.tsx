@@ -12,8 +12,8 @@ const inputClass = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-s
 const buttonClass = 'rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40';
 const sectionClass = 'space-y-4 rounded-2xl border border-slate-200 bg-white p-5';
 
-export default function PracticeLab({ userId, papers, attempts, onStart }: {
-  userId: string; papers: Paper[]; attempts: Attempt[]; onStart: (paper: Paper) => void;
+export default function PracticeLab({ userId, papers, attempts, onStart, disabled }: {
+  userId: string; papers: Paper[]; attempts: Attempt[]; onStart: (paper: Paper) => void; disabled: boolean;
 }) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
@@ -162,7 +162,7 @@ export default function PracticeLab({ userId, papers, attempts, onStart }: {
               {rows.length > 0 && <button className="text-blue-700 underline" onClick={() => setRows(rows.filter((item) => item.topic !== row.topic))}>{t('Remove', 'हटाएँ')}</button>}
             </div>;
           })}</div>
-          <button type="button" className={buttonClass} disabled={shortage || !activeRows.length}
+          <button type="button" className={buttonClass} disabled={disabled || shortage || !activeRows.length}
             onClick={() => start(activeRows.flatMap((row) => shuffled(available(row.topic)).slice(0, row.count)), t('Custom practice test', 'अपना अभ्यास टेस्ट'))}>
             {t('Start practice', 'अभ्यास शुरू करें')}
           </button>
@@ -204,7 +204,7 @@ export default function PracticeLab({ userId, papers, attempts, onStart }: {
         </label>
         <div className="flex flex-wrap items-center gap-3">
           <p className="text-sm">{results.length} {t('matches', 'मिले')} · {picked.length} {t('selected', 'चुने')}</p>
-          <button type="button" className={buttonClass} disabled={!picked.length} onClick={() => start(picked, t('Selected questions', 'चुने हुए सवाल'))}>{t('Start selected test', 'चुने सवालों का टेस्ट')}</button>
+          <button type="button" className={buttonClass} disabled={disabled || !picked.length} onClick={() => start(picked, t('Selected questions', 'चुने हुए सवाल'))}>{t('Start selected test', 'चुने सवालों का टेस्ट')}</button>
           {picked.length > 0 && <button className={inputClass} onClick={() => setSelected([])}>{t('Clear selection', 'चुनाव हटाएँ')}</button>}
         </div>
         <ul className="divide-y divide-slate-100">

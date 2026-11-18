@@ -14,7 +14,7 @@ import {
 } from './types/exam';
 import { loadBuiltInPapers } from './data/builtInPapers';
 import * as storage from './services/storage';
-import { getUserTheme, setUserTheme } from './services/userExtras';
+import { getUserTheme, loadExamDraft, setUserTheme } from './services/userExtras';
 import { calculateScore } from './utils/scoring';
 import Dashboard from './components/Dashboard';
 import ExamScreen from './components/ExamScreen';
@@ -107,6 +107,15 @@ export default function App() {
     localStorage.setItem('rvunl-ui-language', uiLanguage);
   }, [uiLanguage]);
 
+  const openDashboard = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    setScreen({ name: 'dashboard' });
+  };
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [screen.name]);
+
   const themeClass = theme === 'dark' ? 'theme-dark' : theme === 'warm' ? 'theme-warm' : '';
 
   if (!state) {
@@ -158,10 +167,10 @@ export default function App() {
           onThemeChange={handleThemeChange}
           onStart={(paperId) => {
             const paper = state.papers.find((p) => p.paperId === paperId);
-            if (paper) setScreen({ name: 'instructions', paper });
+            if (paper && !loadExamDraft(userId)) setScreen({ name: 'instructions', paper });
           }}
-          onStartVirtualPaper={(paper) => setScreen({ name: 'instructions', paper })}
-          onResumeDraft={(draft) => { enterFullscreen(); setScreen({ name: 'exam', attemptId: crypto.randomUUID(), paper: draft.paper, config: draft.config, draft }); }}
+          onStartVirtualPaper={(paper) => { if (!loadExamDraft(userId)) setScreen({ name: 'instructions', paper }); }}
+          onResumeDraft={(draft) => { enterFullscreen(); setScreen({ name: 'exam', attemptId: draft.attemptId ?? crypto.randomUUID(), paper: draft.paper, config: draft.config, draft }); }}
           onOpenAttempt={(attempt) => {
             const paper = attempt.sessionPaper ?? state.papers.find((p) => p.paperId === attempt.paperId);
             if (paper) setScreen({ name: 'scorecard', attempt, paper });
@@ -237,6 +246,8 @@ export default function App() {
           paper={screen.paper}
           config={screen.config}
           initialDraft={screen.draft}
+          attemptId={screen.attemptId}
+          onDashboard={openDashboard}
           onSubmit={async (responses: Record<string, QuestionResponse>, timeTakenSeconds, submittedByTimer, tabSwitchCount) => {
             const summary = calculateScore(screen.paper, responses, screen.config.negativeMarking);
             const attempt: Attempt = {
@@ -269,7 +280,7 @@ export default function App() {
           attempt={screen.attempt}
           paper={screen.paper}
           onReview={() => setScreen({ name: 'review', attempt: screen.attempt, paper: screen.paper })}
-          onDashboard={() => setScreen({ name: 'dashboard' })}
+          onDashboard={openDashboard}
         />
       )}
 
@@ -279,6 +290,7 @@ export default function App() {
           attempt={screen.attempt}
           paper={screen.paper}
           onBack={() => setScreen({ name: 'scorecard', attempt: screen.attempt, paper: screen.paper })}
+          onDashboard={openDashboard}
         />
       )}
     </div>

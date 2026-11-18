@@ -152,11 +152,13 @@ export interface TypingAttempt {
 }
 
 export interface DraftExamState {
+  attemptId?: string;
   userId: UserId;
   paper: Paper;
   config: ExamConfig;
   responses: Record<string, QuestionResponse>;
   currentIndex: number;
+  pendingResponse?: Pick<QuestionResponse, 'selectedIndex' | 'guessed'>;
   remainingSeconds: number;
   tabSwitchCount: number;
   lastSavedAt: string;

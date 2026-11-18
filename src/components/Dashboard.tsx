@@ -1,4 +1,5 @@
-import { bankQuestions } from '../utils/questionBank';
+import { subjectPracticePapers } from '../data/subjectPractice';
+import { bankQuestions, shuffled } from '../utils/questionBank';
 import PracticeLab from './PracticeLab';
 import { useSubjectLabel, useTranslation } from '../uiLanguage';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -34,7 +35,7 @@ import {
   ThemeMode,
   UserId,
 } from '../types/exam';
-import { formatDuration, resultForAttempt } from '../utils/scoring';
+import { dailyScore, formatDuration, localDateKey, resultForAttempt } from '../utils/scoring';
 import {
   clearExamDraft,
   exportUserExtrasJson,
@@ -109,6 +110,7 @@ export default function Dashboard({
 }: Props) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
+  const [historyDay, setHistoryDay] = useState(() => localDateKey(new Date()));
   const [tab, setTab] = useState<Tab>('papers');
   const [draft, setDraft] = useState<DraftExamState | null>(() => loadExamDraft(userId));
   const [bookmarks, setBookmarks] = useState(() => getBookmarks(userId));
@@ -123,6 +125,9 @@ export default function Dashboard({
     [attempts, userId]
   );
 
+  const today = localDateKey(new Date());
+  const totalToday = dailyScore(userAttempts, today);
+  const selectedDayTotal = historyDay === today ? totalToday : dailyScore(userAttempts, historyDay);
   const paperMap = useMemo(() => new Map(papers.map((p) => [p.paperId, p])), [papers]);
 
   const latestByPaper = useMemo(() => {
@@ -179,6 +184,9 @@ export default function Dashboard({
     return pool;
   }, [papers]);
 
+  const practicePapers = useMemo(() => [...papers, ...subjectPracticePapers], [papers]);
+  const subjectPracticePool = useMemo(() => bankQuestions(practicePapers), [practicePapers]);
+
   const canGenerateSurprise = SUBJECTS.every((subject) =>
     (questionPoolBySubject.get(subject)?.length ?? 0) >= SURPRISE_QUOTA[subject].count);
 
@@ -209,25 +217,16 @@ export default function Dashboard({
     onStartVirtualPaper(mixPaper);
   };
 
-  const launchSubjectMiniTest = (subject: Subject) => {
-    const quota = SURPRISE_QUOTA[subject];
-    const available = [...(questionPoolBySubject.get(subject) ?? [])];
-    for (let i = available.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [available[i], available[j]] = [available[j], available[i]];
-    }
-    const picked = available.slice(0, quota.count).map((q, idx) => ({ ...q, id: idx + 1, marks: quota.marks }));
-    if (picked.length === 0) return;
-    const durationMinutes = subject === 'Rajasthan GK' ? 20 : subject === 'Mathematics' ? 12 : 10;
-    const miniPaper: Paper = {
-      paperId: `mini_${subject.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}`,
-      title: `${subject} Mini Test (${picked.length} Qs)`,
-      durationMinutes,
+  const launchSubjectTest = (subject: Subject) => {
+    const available = subjectPracticePool.filter((question) => question.subject === subject);
+    const picked = shuffled(available).slice(0, 50).map((question, index) => ({ ...question, id: index + 1 }));
+    onStartVirtualPaper({
+      paperId: crypto.randomUUID(),
+      title: `${subjectLabel(subject)} · ${picked.length} ${t('questions', 'सवाल')}`,
+      durationMinutes: 50,
       questions: picked,
       category: 'Subject Practice',
-      difficulty: 'Medium',
-    };
-    onStartVirtualPaper(miniPaper);
+    });
   };
 
   const handleExportExtras = async () => {
@@ -320,13 +319,21 @@ export default function Dashboard({
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-blue-200 bg-blue-50 p-4" aria-label={t("Today's total score", 'आज का कुल स्कोर')}>
+          <div>
+            <h2 className="text-sm font-semibold text-blue-900">{t("Today's total score", 'आज का कुल स्कोर')}</h2>
+            <p className="text-sm text-blue-800">{totalToday.count} {t('completed papers', 'पेपर पूरे')}</p>
+          </div>
+          <strong className="text-2xl text-blue-900">{totalToday.earned} / {totalToday.possible}</strong>
+        </div>
         {draft && (
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
             <div>
               <p className="text-xs font-bold uppercase text-amber-800">{t("Interrupted Exam Found", "अधूरी परीक्षा मिली")}</p>
               <p className="text-sm font-bold text-slate-900">
-                {draft.paper.title} · {formatDuration(draft.remainingSeconds)} remaining
+                {draft.paper.title} · {formatDuration(draft.remainingSeconds)} {t("remaining", "बाकी")}
               </p>
+              <p className="text-xs text-amber-900">{t("Resume or discard this saved paper before starting another.", "नया पेपर शुरू करने से पहले यह पेपर जारी रखें या हटाएँ।")}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -337,20 +344,20 @@ export default function Dashboard({
                 }}
                 className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900"
               >
-                Discard
+                {t("Discard", "हटाएँ")}
               </button>
               <button
                 type="button"
                 onClick={() => onResumeDraft(draft)}
                 className="rounded-lg bg-amber-700 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
               >
-                Resume Interrupted Exam
+                {t("Resume Interrupted Exam", "अधूरी परीक्षा जारी रखें")}
               </button>
             </div>
           </div>
         )}
 
-        {tab === 'practice' && <PracticeLab userId={userId} papers={papers} attempts={userAttempts} onStart={onStartVirtualPaper} />}
+        {tab === 'practice' && <PracticeLab userId={userId} papers={practicePapers} attempts={userAttempts} onStart={onStartVirtualPaper} disabled={Boolean(draft)} />}
 
         {tab === 'papers' && (
           <>
@@ -369,7 +376,7 @@ export default function Dashboard({
                   <button
                     type="button"
                     onClick={launchSurpriseMix}
-                    disabled={!canGenerateSurprise}
+                    disabled={Boolean(draft) || !canGenerateSurprise}
                     title={canGenerateSurprise ? undefined : 'Import more unique questions for each subject.'}
                     className="shrink-0 rounded-lg bg-blue-700 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-800"
                   >
@@ -379,8 +386,8 @@ export default function Dashboard({
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-base font-bold text-slate-900">{t("Subject-Wise Mini Tests", "विषयवार छोटे टेस्ट")}</h2>
-                <p className="mt-1 text-xs text-slate-600">{t("Practice a single subject under timed conditions.", "समय सीमा के साथ किसी एक विषय का अभ्यास करें।")}</p>
+                <h2 className="text-base font-bold text-slate-900">{t("Subject-Wise Tests", "विषयवार टेस्ट")}</h2>
+                <p className="mt-1 text-xs text-slate-600">{t("50 questions in 50 minutes.", "50 सवाल, 50 मिनट।")}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <select
                     value={miniSubject}
@@ -389,16 +396,17 @@ export default function Dashboard({
                   >
                     {SUBJECTS.map((s) => (
                       <option key={s} value={s}>
-                        {subjectLabel(s)} ({SURPRISE_QUOTA[s].count})
+                        {subjectLabel(s)} (50)
                       </option>
                     ))}
                   </select>
                   <button
                     type="button"
-                    onClick={() => launchSubjectMiniTest(miniSubject)}
+                    disabled={Boolean(draft)}
+                    onClick={() => launchSubjectTest(miniSubject)}
                     className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                   >
-                    {t("Start Mini Test", "छोटा टेस्ट शुरू करें")}
+                    {t("Start subject test", "विषय का टेस्ट शुरू करें")}
                   </button>
                 </div>
               </div>
@@ -414,7 +422,8 @@ export default function Dashboard({
                     <button
                       key={w.subject}
                       type="button"
-                      onClick={() => launchSubjectMiniTest(w.subject)}
+                      disabled={Boolean(draft)}
+                      onClick={() => launchSubjectTest(w.subject)}
                       className="inline-flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
                     >
                       <span>{subjectLabel(w.subject)} · {w.accuracy}%</span>
@@ -452,6 +461,7 @@ export default function Dashboard({
                     </div>
                     <button
                       type="button"
+                      disabled={Boolean(draft)}
                       onClick={() => onStart(paper.paperId)}
                       className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-800"
                     >
@@ -466,6 +476,14 @@ export default function Dashboard({
 
         {tab === 'history' && (
           <div className="space-y-6">
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <label className="text-sm font-semibold text-slate-700">
+                {t('Score date', 'स्कोर की तारीख')}
+                <input type="date" className="ml-2 rounded-lg border px-2 py-1" value={historyDay} max={today}
+                  onChange={(event) => setHistoryDay(event.target.value || today)} />
+              </label>
+              <p className="text-sm text-slate-700">{selectedDayTotal.count} {t('completed papers', 'पेपर पूरे')} · {t('Total score', 'कुल स्कोर')} <strong>{selectedDayTotal.earned} / {selectedDayTotal.possible}</strong></p>
+            </section>
             {trendData.length > 0 && (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="mb-4 flex items-center gap-2 text-base font-bold text-slate-900">
@@ -556,7 +574,7 @@ export default function Dashboard({
 
         {tab === 'typing' && <TypingPractice userId={userId} userName={userName} />}
 
-        {tab === 'mistakes' && <MistakeBank userId={userId} attempts={userAttempts} papers={papers} onPractice={onStartVirtualPaper} />}
+        {tab === 'mistakes' && <MistakeBank userId={userId} attempts={userAttempts} papers={papers} onPractice={onStartVirtualPaper} disabled={Boolean(draft)} />}
 
         {tab === 'settings' && (
           <div className="space-y-6">

@@ -101,3 +101,8 @@ Open **Practice** to combine topics, choose question counts and difficulty, and 
 Papers can supply optional question-level metadata. JSON questions accept `topic`, `difficulty` (Easy, Medium, Hard), `source` (with `title` and optional `year`), and `optionExplanations_en` / `optionExplanations_hi` arrays in A–E order. In CSV/XLSX, use `topic`, `difficulty`, `source`, `year`, and columns like `explanation_a_hi`. Existing papers use text-based topic matching and paper-level difficulty when question metadata is absent. The importer reports repeated questions and preserves the original paper.
 
 The optional **Save & Next** mode saves a selection when you use Save & Next, Save answer on the last question, or Mark for Review & Next. Opening another question directly discards an unsaved selection. The full-paper view and final submission checklist show only exam content and response status. Option explanations and the result of guessed answers appear in post-exam review.
+
+
+**Subject-wise tests** draw 50 distinct questions for the selected subject and allow 50 minutes. The app includes an offline practice bank across all six subjects, plus any imported questions. Rajasthan landmark facts use the [Rajasthan Tourism destination guides](https://www.tourism.rajasthan.gov.in/tourist-destinations.html). Element symbols follow the [IUPAC periodic table](https://iupac.org/what-we-do/periodic-table-of-elements/).
+
+Use **Save & return to dashboard** during a paper to pause it. Resume it from the dashboard with your saved answers and remaining time. Today's total combines the earned and possible marks from every completed attempt on this profile. History lets you view the total for an earlier date.

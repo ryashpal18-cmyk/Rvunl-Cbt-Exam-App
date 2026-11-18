@@ -1,11 +1,13 @@
 import { useSubjectLabel, useTranslation } from '../uiLanguage';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Bookmark, ChevronLeft, ChevronRight, Clock3, Eraser, Languages, NotebookPen, Send, X } from 'lucide-react';
+import { AlertTriangle, Bookmark, ChevronLeft, ChevronRight, Clock3, Eraser, Home, Languages, NotebookPen, Send, X } from 'lucide-react';
 import { DraftExamState, ExamConfig, Paper, QuestionResponse, UserId } from '../types/exam';
 import { clearExamDraft, saveExamDraft } from '../services/userExtras';
 import QuestionPalette from './QuestionPalette';
 
 interface Props {
+  attemptId: string;
+  onDashboard: () => void;
   userId: UserId;
   userName: string;
   paper: Paper;
@@ -14,10 +16,10 @@ interface Props {
   onSubmit: (responses: Record<string, QuestionResponse>, timeTakenSeconds: number, submittedByTimer: boolean, tabSwitchCount: number) => Promise<void>;
 }
 
-export default function ExamScreen({ userId, userName, paper, config, initialDraft, onSubmit }: Props) {
+export default function ExamScreen({ attemptId, userId, userName, paper, config, initialDraft, onSubmit, onDashboard }: Props) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
-  const [pending, setPending] = useState<{ selectedIndex?: number; guessed?: boolean } | null>(null);
+  const [pending, setPending] = useState<DraftExamState['pendingResponse'] | null>(initialDraft?.pendingResponse ?? null);
   const fullPaperDialog = useRef<HTMLDialogElement>(null);
   const [paletteHidden, setPaletteHidden] = useState(false);
   const [showFullPaper, setShowFullPaper] = useState(false);
@@ -36,6 +38,7 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
   const initialRemaining = initialDraft?.remainingSeconds ?? totalSeconds;
   const [remaining, setRemaining] = useState(initialRemaining);
   const [showSubmit, setShowSubmit] = useState(false);
+  const [draftError, setDraftError] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [saving, setSaving] = useState(false);
   const submission = useRef<Parameters<Props['onSubmit']> | null>(null);
@@ -111,22 +114,43 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
   // Countdown Timer
   useEffect(() => {
     const timer = setInterval(() => {
-      const secs = Math.max(0, Math.round((deadline.current - Date.now()) / 1000));
+      const secs = Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000));
       setRemaining(secs);
       if (secs === 0) submitExam(true);
     }, 500);
     return () => clearInterval(timer);
   }, [submitExam]);
 
-  const persistDraft = useCallback((snapshot: Record<string, QuestionResponse>, index: number) => {
-    if (submitted.current) return;
-    saveExamDraft({
-      userId, paper, config, responses: snapshot, currentIndex: index,
-      remainingSeconds: Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000)),
-      tabSwitchCount: tabSwitchRef.current,
-      lastSavedAt: new Date().toISOString(),
-    });
-  }, [config, paper, userId]);
+  const persistDraft = useCallback((snapshot: Record<string, QuestionResponse>, index: number, pendingResponse?: DraftExamState['pendingResponse']) => {
+    try {
+      saveExamDraft({
+        attemptId, userId, paper, config, responses: snapshot, currentIndex: index, pendingResponse,
+        remainingSeconds: Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000)),
+        tabSwitchCount: tabSwitchRef.current,
+        lastSavedAt: new Date().toISOString(),
+      });
+      setDraftError(false);
+      return true;
+    } catch {
+      setDraftError(true);
+      return false;
+    }
+  }, [attemptId, config, paper, userId]);
+
+  const returnToDashboard = () => {
+    if (saving) return;
+    if (!submitted.current && deadline.current <= Date.now()) {
+      submitExam(true);
+      return;
+    }
+    const index = currentIndexRef.current;
+    const snapshot = submission.current?.[0] ?? withCurrentTime(responsesRef.current, index);
+    responsesRef.current = snapshot;
+    setResponses(snapshot);
+    if (!persistDraft(snapshot, index, submitted.current ? undefined : pending ?? undefined)) return;
+    submitted.current = true;
+    onDashboard();
+  };
 
   useEffect(() => {
     const save = () => {
@@ -137,7 +161,7 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
       persistDraft(snapshot, currentIndexRef.current);
     };
     const timer = setInterval(save, 5000);
-    const onPageHide = () => persistDraft(responsesRef.current, currentIndexRef.current);
+    const onPageHide = () => { if (!submitted.current) persistDraft(responsesRef.current, currentIndexRef.current); };
     window.addEventListener('pagehide', onPageHide);
     return () => {
       clearInterval(timer);
@@ -256,6 +280,9 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
           <h1 className="text-sm font-bold text-slate-900 md:text-base">{paper.title}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-bold text-blue-800" onClick={returnToDashboard}>
+            <Home className="h-4 w-4" /> {t('Save & return to dashboard', 'सेव करके डैशबोर्ड पर लौटें')}
+          </button>
           <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-bold" onClick={() => setShowFullPaper(true)}>
             {t('View full paper', 'पूरा पेपर देखें')}
           </button>
@@ -279,6 +306,9 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
         </div>
       </header>
 
+      {draftError && <p role="alert" className="bg-red-50 px-6 py-2 text-sm text-red-800">
+        {t('The draft could not be saved. Try again before leaving.', 'अधूरा पेपर सेव नहीं हुआ। जाने से पहले फिर कोशिश करें।')}
+      </p>}
       {focusWarning && (
         <div className="flex items-center justify-between bg-amber-100 px-6 py-2 text-xs font-semibold text-amber-900">
           <span className="flex items-center gap-2">
@@ -419,6 +449,10 @@ export default function ExamScreen({ userId, userName, paper, config, initialDra
             {saving ? <p role="status">{t("Saving your result…", "रिज़ल्ट सेव हो रहा है…")}</p> : <>
               <p role="alert">{t("Your result could not be saved. Your answers are still here.", "रिज़ल्ट सेव नहीं हुआ। आपके जवाब अभी मौजूद हैं।")}</p>
               <button autoFocus className="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-white" onClick={() => void saveSubmission()}>{t("Retry saving", "दोबारा सेव करें")}</button>
+              <button className="ml-2 mt-3 rounded-lg border px-4 py-2" onClick={returnToDashboard}>
+                {t('Save draft & return', 'अधूरा पेपर सेव करके लौटें')}
+              </button>
+              {draftError && <p role="alert" className="mt-2 text-sm text-red-700">{t('Could not save the draft.', 'अधूरा पेपर सेव नहीं हुआ।')}</p>}
             </>}
           </div>
         </div>

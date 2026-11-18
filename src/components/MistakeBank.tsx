@@ -9,9 +9,10 @@ interface Props {
   attempts: Attempt[];
   papers: Paper[];
   onPractice: (paper: Paper) => void;
+  disabled: boolean;
 }
 
-export default function MistakeBank({ userId, attempts, papers, onPractice }: Props) {
+export default function MistakeBank({ userId, attempts, papers, onPractice, disabled }: Props) {
   const t = useTranslation();
   const [bookmarks, setBookmarks] = useState(() => getBookmarks(userId));
   const mistakes = new Map<string, { paper: Paper; question: Question }>();
@@ -41,7 +42,7 @@ export default function MistakeBank({ userId, attempts, papers, onPractice }: Pr
       <h2 className="text-2xl font-bold">{t("Mistake Bank", "गलत सवाल")}</h2>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-5">
         <div className="flex items-center gap-2"><AlertCircle className="text-red-600" /> {mistakes.size} unique questions to revisit</div>
-        <button disabled={!mistakes.size} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={practice}>
+        <button disabled={disabled || !mistakes.size} className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={practice}>
           <RotateCcw size={16} /> {t("Start mini-test", "छोटा टेस्ट शुरू करें")}
         </button>
       </div>
