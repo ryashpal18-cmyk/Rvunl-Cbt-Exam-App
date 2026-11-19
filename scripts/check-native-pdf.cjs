@@ -35,8 +35,10 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, 'Hindi-results-check.pdf'), bytes);
     console.log('PASS: native Hindi PDF contains embedded Unicode mappings and one page.');
     try {
+      ui.webContents.on('console-message', (_event, details) => { if (details.level === 'error') console.error('Renderer:', details.message); });
       await ui.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
       const clickButton = async (label) => {
+        console.log(`UI click: ${label}`);
         await ui.webContents.executeJavaScript(`(() => {
           const button = [...document.querySelectorAll('button')].find((item) => (item.textContent.includes(${JSON.stringify(label)}) || item.getAttribute('aria-label') === ${JSON.stringify(label)}) && getComputedStyle(item).visibility !== 'hidden' && item.getBoundingClientRect().width > 0);
           if (!button) throw new Error('Missing button: ' + ${JSON.stringify(label)});
@@ -55,6 +57,7 @@ app.whenReady().then(async () => {
       await waitForText('Start Mini Test');
       await ui.setSize(1440, 1000);
       for (const mode of ['Light', 'Dark', 'Warm']) {
+        console.log(`UI theme: ${mode}`);
         await ui.webContents.executeJavaScript(`(() => {
           const header = document.querySelector('.dashboard-header');
           [...header.querySelectorAll('button')].find((button) => button.textContent.trim() === ${JSON.stringify(mode)}).click();
