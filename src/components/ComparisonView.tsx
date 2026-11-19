@@ -15,15 +15,15 @@ import { useSubjectLabel, useTranslation } from '../uiLanguage';
 interface Props {
   attempts: Attempt[];
   papers: Paper[];
-  userId: UserId;
-  userName: string;
+  userId?: UserId;
+  userName?: string;
 }
 
 export default function ComparisonView({
   attempts,
   papers,
   userId,
-  userName,
+  userName = 'Candidate',
 }: Props) {
   const t = useTranslation();
   const subjectLabel = useSubjectLabel();
