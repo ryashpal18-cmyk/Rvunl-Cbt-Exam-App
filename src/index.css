@@ -583,3 +583,27 @@
     break-inside: avoid;
   }
 }
+
+/* Keep the host app's language control in the chosen palette. */
+.theme-dark > .bg-white {
+  background-color: #0f172a;
+  border-color: #334155;
+}
+.theme-dark > .bg-white .text-slate-700 {
+  color: #cbd5e1;
+}
+.theme-dark > .bg-white select {
+  background-color: #1e293b;
+  color: #edf2ff;
+  border-color: #475569;
+}
+.theme-warm > .bg-white {
+  background-color: #f6f1e7;
+  border-color: #d8ccba;
+}
+.theme-warm > .bg-white select {
+  background-color: #fffbf3;
+}
+.dashboard-shell :where(h1, h2, h3) {
+  overflow-wrap: anywhere;
+}

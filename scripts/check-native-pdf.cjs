@@ -35,7 +35,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, 'Hindi-results-check.pdf'), bytes);
     console.log('PASS: native Hindi PDF contains embedded Unicode mappings and one page.');
     try {
-      ui.webContents.on('console-message', (_event, details) => { if (details.level === 'error') console.error('Renderer:', details.message); });
+      ui.webContents.on('console-message', (event) => { if (event.level === 'error') console.error('Renderer:', event.message); });
       await ui.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
       const clickButton = async (label) => {
         console.log(`UI click: ${label}`);
@@ -77,6 +77,8 @@ app.whenReady().then(async () => {
       assert.equal(await ui.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.dashboard-sidebar')).visibility`), 'visible');
       fs.writeFileSync(path.join(output, 'Dashboard-compact-navigation-check.png'), (await ui.webContents.capturePage()).toPNG());
       await clickButton('Close navigation');
+      // Keep the exam in the compact test viewport instead of entering desktop fullscreen.
+      await ui.webContents.executeJavaScript(`(() => { document.documentElement.requestFullscreen = () => Promise.resolve(); })()`);
       await clickButton('Start Mini Test');
       await waitForText('Start exam');
       await ui.webContents.executeJavaScript(`(() => {
@@ -85,6 +87,7 @@ app.whenReady().then(async () => {
       })()`);
       await clickButton('Start exam');
       await waitForText('Show question numbers');
+      assert.equal(await ui.webContents.executeJavaScript(`window.innerWidth < 1024`), true, 'Compact exam test must stay below the desktop breakpoint');
       await clickButton('Show question numbers');
       await new Promise((resolve) => setTimeout(resolve, 150));
       assert.equal(await ui.webContents.executeJavaScript(`(() => {
